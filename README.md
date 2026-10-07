@@ -51,7 +51,7 @@ This is **not** a full Fabric server. It's a compatibility layer for **simple to
 ### Requirements
 
 - **Java 25** (Oracle JDK or OpenJDK)
-- **Leaf server** 26.2 or 26.1.2
+- **Leaf server** 26.2
 - Fabric mods placed in `/mods/` folder
 
 ### Steps
