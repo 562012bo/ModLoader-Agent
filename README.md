@@ -42,7 +42,7 @@ This is **not** a full Fabric server. It's a compatibility layer for **simple to
 - ✅ Bridges Bukkit ↔ Fabric events
 - ✅ Registers Fabric mods as Bukkit plugins (visible in `/plugins`)
 - ✅ Custom mapping system (`mappings.tiny`) for Paper/Leaf ↔ Fabric compat
-- ✅ Supports Minecraft **26.2** and **26.1.2** (Java 25)
+- ✅ Supports Minecraft **26.2** (Java 25)
 
 ---
 
