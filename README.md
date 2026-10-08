@@ -46,6 +46,12 @@ This is **not** a full Fabric server. It's a compatibility layer for **simple to
 
 ---
 
+## Support
+- Fabric Loader 0.19.5
+- Fabric API 0.161.0+26.2
+
+---
+
 ## 🚀 How to use
 
 ### Requirements
