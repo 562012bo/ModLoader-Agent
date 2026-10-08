@@ -10,11 +10,11 @@
   <packaging>jar</packaging>
 
   <properties>
-    <maven.compiler.source>21</maven.compiler.source>
-    <maven.compiler.target>21</maven.compiler.target>
+    <maven.compiler.source>25</maven.compiler.source>
+    <maven.compiler.target>25</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <!-- This is the class the JVM calls when -javaagent:modloader-agent.jar is used -->
-    <agent.mainclass>ankhangbo.modloader.ModLoaderAgent</agent.mainclass>
+    <agent.mainclass>ankhangbo.fabricloader.FabricLoaderAgent</agent.mainclass>
   </properties>
 
   <repositories>
@@ -59,22 +59,27 @@
     <dependency>
       <groupId>org.ow2.asm</groupId>
       <artifactId>asm</artifactId>
-      <version>9.9.1</version>
+      <version>9.10.1</version>
     </dependency>
     <dependency>
       <groupId>org.ow2.asm</groupId>
       <artifactId>asm-tree</artifactId>
-      <version>9.9.1</version>
+      <version>9.10.1</version>
     </dependency>
     <dependency>
       <groupId>org.ow2.asm</groupId>
       <artifactId>asm-commons</artifactId>
-      <version>9.9.1</version>
+      <version>9.10.1</version>
+    </dependency>
+    <dependency>
+        <groupId>org.ow2.asm</groupId>
+        <artifactId>asm-analysis</artifactId>
+        <version>9.10.1</version>
     </dependency>
     <dependency>
       <groupId>org.ow2.asm</groupId>
       <artifactId>asm-util</artifactId>
-      <version>9.9.1</version>
+      <version>9.10.1</version>
     </dependency>
 
     <!-- Netty dependencies -->
@@ -85,34 +90,17 @@
 		<scope>provided</scope>
     </dependency>
     
-    <!-- Or if you prefer specific modules, you can use these instead: -->
-    <!--
-    <dependency>
-        <groupId>io.netty</groupId>
-        <artifactId>netty-buffer</artifactId>
-        <version>4.1.100.Final</version>
-    </dependency>
-    <dependency>
-        <groupId>io.netty</groupId>
-        <artifactId>netty-common</artifactId>
-        <version>4.1.100.Final</version>
-    </dependency>
-    <dependency>
-        <groupId>io.netty</groupId>
-        <artifactId>netty-transport</artifactId>
-        <version>4.1.100.Final</version>
-    </dependency>
-    <dependency>
-        <groupId>io.netty</groupId>
-        <artifactId>netty-codec</artifactId>
-        <version>4.1.100.Final</version>
-    </dependency>
-    <dependency>
-        <groupId>io.netty</groupId>
-        <artifactId>netty-handler</artifactId>
-        <version>4.1.100.Final</version>
-    </dependency>
-    -->
+	<dependency>
+		<groupId>org.antlr</groupId>
+		<artifactId>antlr4-runtime</artifactId>
+		<version>4.13.2</version>
+	</dependency>
+	
+	<dependency>
+		<groupId>com.github.zafarkhaja</groupId>
+		<artifactId>java-semver</artifactId>
+		<version>0.10.2</version>
+	</dependency>
 
 	<dependency>
 		<groupId>com.mojang</groupId>
@@ -159,9 +147,21 @@
     <dependency>
         <groupId>net.fabricmc</groupId>
         <artifactId>sponge-mixin</artifactId>
-        <version>0.17.3+mixin.0.8.7</version>
+        <version>0.17.4+mixin.0.8.7</version>
     </dependency>
 
+	<dependency>
+		<groupId>io.github.llamalad7</groupId>
+		<artifactId>mixinextras-fabric</artifactId>
+		<version>0.5.5</version>
+	</dependency>
+
+	<dependency>
+		<groupId>net.fabricmc.fabric-api</groupId>
+		<artifactId>fabric-resource-loader-v1</artifactId>
+		<version>2.0.10+7c44c7324c</version>
+		<scope>provided</scope>
+	</dependency>
     <!-- Gson: parsing mods.json / *.mixins.json -->
     <dependency>
       <groupId>com.google.code.gson</groupId>
@@ -216,19 +216,60 @@
 
 	<dependency>
 		<groupId>io.papermc.paper</groupId>
-		<artifactId>paper</artifactId>
-		<version>26.1.2</version>
+		<artifactId>leaf-server</artifactId>
+		<version>26.2</version>
 		<scope>system</scope>
-		<systemPath>${project.basedir}/jar/paper-26.1.2.jar</systemPath>
+		<systemPath>E:/fabricloader-agent-0.19.3/jar/leaf-26.2.jar</systemPath>
 	</dependency>
 
     <!-- Paper server API, compile-only: we never ship this, the server already has it at runtime -->
     <dependency>
       <groupId>io.papermc.paper</groupId>
       <artifactId>paper-api</artifactId>
-      <version>[26.1.2.build,)</version>
+      <version>[26.2.build,)</version>
       <scope>provided</scope>
     </dependency>
+	
+	<dependency>
+		<groupId>org.ow2.sat4j</groupId>
+		<artifactId>org.ow2.sat4j.pb</artifactId>
+		<version>2.3.6</version>
+	</dependency>
+	
+	<dependency>
+		<groupId>net.fabricmc</groupId>
+		<artifactId>tiny-remapper</artifactId>
+		<version>0.14.1</version>
+	</dependency>
+
+	<dependency>
+		<groupId>net.fabricmc</groupId>
+		<artifactId>access-widener</artifactId>
+		<version>2.1.0</version>
+	</dependency>
+
+	<!-- Java JWT (Auth0) -->
+	<dependency>
+		<groupId>com.auth0</groupId>
+		<artifactId>java-jwt</artifactId>
+		<version>4.4.0</version>
+	</dependency>
+
+	<!-- Bouncy Castle (cho PEM decoder, ECDSA) -->
+	<dependency>
+		<groupId>org.bouncycastle</groupId>
+		<artifactId>bcpkix-jdk18on</artifactId>
+		<version>1.78.1</version>
+	</dependency>
+
+	<!-- Javalin -->
+	<dependency>
+		<groupId>io.javalin</groupId>
+		<artifactId>javalin</artifactId>
+		<version>6.3.0</version>
+	</dependency>
+
+	
   </dependencies>
 
   <build>
@@ -238,7 +279,7 @@
 	<plugin>
 		<groupId>org.apache.maven.plugins</groupId>
 		<artifactId>maven-shade-plugin</artifactId>
-		<version>3.5.1</version>
+		<version>3.6.1</version>
 		<executions>
 			<execution>
 				<phase>package</phase>
@@ -274,27 +315,25 @@
 							<shadedPattern>ankhangbo.modloader.libs.gson</shadedPattern>
 						</relocation>
 					</relocations>
-					
-					<!-- ⭐ THÊM TRANSFORMER ĐỂ THÊM VERSION VÀO MANIFEST -->
+
 					<transformers>
 						<transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
 							<manifestEntries>
-								<Premain-Class>ankhangbo.modloader.ModLoaderAgent</Premain-Class>
-								<Agent-Class>ankhangbo.modloader.ModLoaderAgent</Agent-Class>
+								<Premain-Class>ankhangbo.fabricloader.FabricLoaderAgent</Premain-Class>
+								<Agent-Class>ankhangbo.fabricloader.FabricLoaderAgent</Agent-Class>
+								<Main-Class>ankhangbo.fabricloader.FabricLoaderAgent</Main-Class>
 								<Can-Retransform-Classes>true</Can-Retransform-Classes>
 								<Can-Redefine-Classes>true</Can-Redefine-Classes>
-								<!-- ⭐ THÊM ASM VERSION -->
 								<Implementation-Title>ASM</Implementation-Title>
-								<Implementation-Version>9.9.1</Implementation-Version>
+								<Implementation-Version>9.10.1</Implementation-Version>
 								<Bundle-Name>org.objectweb.asm</Bundle-Name>
-								<Bundle-Version>9.9.1</Bundle-Version>
+								<Bundle-Version>9.10.1</Bundle-Version>
 							</manifestEntries>
 						</transformer>
 						<transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
 					</transformers>
 					
 					<filters>
-						<!-- ⭐ LOẠI BỎ ASM CŨ CỦA MIXIN (vẫn giữ, không đổi) -->
 						<filter>
 							<artifact>net.fabricmc:sponge-mixin</artifact>
 							<excludes>
@@ -319,16 +358,14 @@
 	</plugin>
 
       <!-- Manifest: Premain-Class + Agent-Class + retransform flags -->
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-jar-plugin</artifactId>
-        <version>3.4.1</version>
-        <configuration>
-          <archive>
-            <manifestFile>src/main/resources/META-INF/MANIFEST.MF</manifestFile>
-          </archive>
-        </configuration>
-      </plugin>
+		<plugin>
+			<groupId>org.apache.maven.plugins</groupId>
+			<artifactId>maven-jar-plugin</artifactId>
+			<version>3.4.1</version>
+			<configuration>
+				<skip>true</skip>
+			</configuration>
+		</plugin>
     </plugins>
   </build>
 </project>
