@@ -1,0 +1,490 @@
+# thư tự load
+# 1. SignaturePatch
+# 2. TrailingArgsPatch
+# 3. LeadingArgsPatch
+# 4. ShadowFieldTypePatch
+# 5. ShadowFieldRedirectPatch
+# 6. CallbackInfoReturnablePatch
+# 7. CallGrowthPatch
+# 8. AsmPatch
+# 9. AnnotationSelectorPatch
+# 10. MixinRetargetPatch
+# 11. MethodBodyPatch
+# 12. WrapMethodPatch
+# 13. RedirectTrailingArgsPatch
+# 14. HelperCallPatch
+# 15. InsertParamPatch
+# 16. OperationCallGrowthPatch
+# 17. InjectorRewritePatch
+
+# Paper <-> Fabric mod compat mappings.
+#
+# Read by net/fabricmc/loader/impl/transformer/PaperModSignatureCompat.java, once, the first time
+# that class is loaded. Editing this file and rebuilding the agent jar (no Java changes needed)
+# changes what that system patches.
+#
+# NOTE: despite the filename, this is NOT the standard Fabric/Tiny mapping format (though CLASS/
+# METHOD/FIELD below use the same nested indentation convention as real Tiny v2).
+#
+# Blank lines and lines starting with '#' are ignored. Every other line is one of:
+#
+# ---- CLASS / METHOD / FIELD: general rename table ----
+#
+#   CLASS	<oldInternalName>	<newInternalName>
+#   	METHOD	<oldDescriptor>	<oldName>	<newDescriptor>	<newName>
+#   	FIELD	<oldDescriptor>	<oldName>	<newDescriptor>	<newName>
+#
+# Applied via ASM's own Remapper/ClassRemapper framework (org.objectweb.asm.commons) across the
+# ENTIRE bytecode of every mod class (and any nested jar-in-jar within it) — every method call,
+# field access, and type reference, not just @Mixin annotation values. This is the tool for the
+# common case now that Fabric's own intermediary mapping layer is gone as of Minecraft 26.1: mods'
+# compiled bytecode calls/references vanilla identifiers LITERALLY (no obfuscation layer to
+# translate through anymore), so whenever Paper simply RENAMES something a mod references, that
+# reference needs an explicit 1:1 substitution here or the mod's compiled call sites stay pointed
+# at a name that no longer exists.
+#
+# METHOD/FIELD lines MUST be tab-indented and apply to whichever CLASS line most recently preceded
+# them (exactly like nested method/field lines in a real Tiny v2 file). oldDescriptor/newDescriptor
+# normally match exactly, UNLESS the only difference between them is a class ALSO renamed by a
+# CLASS line elsewhere in this file (ASM's Remapper substitutes those references automatically,
+# anywhere they appear inside a method/field descriptor).
+#
+# ---- signaturePatch: structural (not just renamed) parameter changes ----
+#
+#   signaturePatch	<targetClassInternalName>	<oldArgPrefixDescriptor>	<newArgPrefixDescriptor>	<reconstructorOwner>	<reconstructorName>	<reconstructorDesc>
+#
+# Use this instead of CLASS/METHOD/FIELD when Paper didn't just rename something, but genuinely
+# restructured a method's leading parameter to a different, UNRELATED type — e.g.
+# net.minecraft.server.Main.main(String[]) -> main(OptionSet). A plain rename can't safely express
+# this: every mod call site still pushes the OLD-typed value onto the stack, so a blind name/type
+# substitution would corrupt it. This instead retargets a mod's own @Mixin callback's descriptor
+# and reconstructs a fresh, real value of the ORIGINAL argument at the very start of the callback
+# body (via the given "reconstructor" static method), so the rest of the mod's own callback logic —
+# completely unmodified — keeps working exactly as it did against vanilla.
+#
+# - targetClassInternalName : the @Mixin's target class, slash-separated (e.g. net/minecraft/server/Main).
+#                              Matches whether the mod's own @Mixin annotation specifies the target
+#                              via a Class literal (value = Main.class) or a String
+#                              (targets = "net.minecraft.server.Main") — both forms are checked.
+# - oldArgPrefixDescriptor  : the start of the vanilla-shaped method descriptor a mod's callback
+#                              might still use, up to (not including) the trailing Mixin callback
+#                              parameter (CallbackInfo / CallbackInfoReturnable). E.g. "([Ljava/lang/String;"
+# - newArgPrefixDescriptor  : what Paper actually changed that leading argument's type to.
+#                              E.g. "(Ljoptsimple/OptionSet;"
+# - reconstructorOwner/Name/Desc : a public static, no-argument method (internal class name / name
+#                              / descriptor) that returns a fresh, real value of the ORIGINAL
+#                              (old-shaped) argument at runtime. Add one such method to
+#                              PaperModSignatureCompat.java (or anywhere else on the classpath) per
+#                              new row that needs one.
+#
+# ---- Active patches ----
+
+signaturePatch	net/minecraft/server/Main	([Ljava/lang/String;	(Ljoptsimple/OptionSet;	net/fabricmc/loader/impl/transformer/PaperModSignatureCompat	getRealServerLaunchArgs	()[Ljava/lang/String;
+
+# ---- leadingArgsPatch: Paper inserted brand-new real parameter(s) at the START of the real args
+#      instead of the end (see trailingArgsPatch below for the far more common end-insertion case) ----
+#
+#   leadingArgsPatch	<targetClassInternalName>	<oldRealArgsDescriptor>	<insertedArgsDescriptor>	[targetMethodName]
+#
+# Same idea as trailingArgsPatch, mirrored: the new param(s) go right after `this` (for an instance
+# method) and BEFORE every one of the callback's own original real args, so every original real arg
+# AND the callback parameter shift up by however many slots the inserted params take.
+#
+# - targetMethodName (optional, same as trailingArgsPatch/signaturePatch below): restrict to mixin
+#   methods whose OWN injector annotation (@Inject/@Redirect/... — detected generically by scanning
+#   for any annotation with a "method" element) names this real target. Omit (leave the column out
+#   entirely) to match ANY method in the targeted mixin class with the right old-descriptor shape,
+#   the original (pre-targetMethodName) behavior — only safe when you're sure no OTHER, unrelated
+#   injector method in the same mixin class happens to share that exact shape.
+
+
+CLASS	net/minecraft/world/entity/LivingEntity	net/minecraft/world/entity/LivingEntity
+	METHOD	addEffect(Lnet/minecraft/world/effect/MobEffectInstance;Lnet/minecraft/world/entity/Entity;)Z	addEffect	addEffect(Lnet/minecraft/world/effect/MobEffectInstance;Lnet/minecraft/world/entity/Entity;Lorg/bukkit/event/entity/EntityAddEffectEvent$Cause;)Z	addEffect
+
+CLASS	net/minecraft/server/players/PlayerList	net/minecraft/server/players/PlayerList
+	METHOD	(Lnet/minecraft/server/level/ServerPlayer;ZLnet/minecraft/world/entity/Entity$RemovalReason;)Lnet/minecraft/server/level/ServerPlayer;	respawn	(Lnet/minecraft/server/level/ServerPlayer;ZLnet/minecraft/world/entity/Entity$RemovalReason;Lorg/bukkit/event/player/PlayerRespawnEvent$RespawnReason;)Lnet/minecraft/server/level/ServerPlayer;	respawn
+
+CLASS	net/minecraft/server/network/ServerGamePacketListenerImpl	net/minecraft/server/network/ServerGamePacketListenerImpl
+	METHOD	(Lnet/minecraft/world/item/ItemStack;)V	tryPickItem	(Lnet/minecraft/world/item/ItemStack;Lorg/bukkit/event/player/PlayerPickItemEvent$PickItemReason;)V	tryPickItem
+
+# targetMethodName = "addEffect" added below after a real regression: Fabric API's own
+# LivingEntityMixin ALSO has an unrelated @Inject("beforeForceAddEffect", method =
+# "forceAddEffect") with the EXACT same (MobEffectInstance;Entity; ... CallbackInfo)V shape —
+# without this filter, this row used to retarget BOTH, corrupting forceAddEffect's callback
+# (which Paper never touched) right alongside the genuinely-affected addEffect one. Verified by
+# parsing fabric-entity-events-v1's own compiled LivingEntityMixin.class directly (its "addEffect"
+# callback is named "beforeAddEffect", @Inject(method = "addEffect(Lnet/minecraft/world/effect/
+# MobEffectInstance;Lnet/minecraft/world/entity/Entity;)Z") — NOT the similarly-shaped
+# "beforeForceAddEffect").
+trailingArgsPatch	net/minecraft/world/entity/LivingEntity	Lnet/minecraft/world/effect/MobEffectInstance;Lnet/minecraft/world/entity/Entity;	Lorg/bukkit/event/entity/EntityPotionEffectEvent$Cause;Z	addEffect
+
+# Paper - PlayerList.respawn(ServerPlayer, boolean, Entity.RemovalReason) grew a trailing
+# PlayerRespawnEvent.RespawnReason parameter. Verified against fabric-entity-events-v1's own
+# compiled PlayerListMixin.class: its "afterRespawn" callback is @Inject(method = "respawn").
+trailingArgsPatch	net/minecraft/server/players/PlayerList	Lnet/minecraft/server/level/ServerPlayer;ZLnet/minecraft/world/entity/Entity$RemovalReason;	Lorg/bukkit/event/player/PlayerRespawnEvent$RespawnReason;	respawn
+
+# Paper - ReloadableServerRegistries's own per-LootDataType element-loading lambda (inside
+# scheduleRegistryLoad) grew a trailing io.papermc.paper.registry.data.util.Conversions
+# parameter. Verified against fabric-loot-api-v3's own compiled ReloadableServerRegistriesMixin
+# .class: its "modifyLootTable" callback is @Inject(method = "lambda$scheduleRegistryLoad$0").
+# CAVEAT: unlike a real named method, a javac-generated lambda name like this can shift (e.g. to
+# lambda$scheduleRegistryLoad$1) if Paper's own patches add or remove another lambda earlier in
+# the SAME source method — if this stops matching after a future Paper/Leaf update, re-verify the
+# real lambda index against the then-current ReloadableServerRegistries source.
+trailingArgsPatch	net/minecraft/server/ReloadableServerRegistries	Lnet/minecraft/world/level/storage/loot/LootDataType;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/resources/RegistryOps;	Lio/papermc/paper/registry/data/util/Conversions;	lambda$scheduleRegistryLoad$0
+
+# Paper - TagLoader.build(...) grew a trailing io.papermc.paper.tag.TagEventConfig parameter.
+# Verified against fabric-tag-api-v1's own compiled TagLoaderMixin.class: its
+# "removeTagRemovalReferencesWhenFinished" callback is @Inject(method = "build").
+trailingArgsPatch	net/minecraft/tags/TagLoader	Ljava/util/Map;	Lio/papermc/paper/tag/TagEventConfig;	build
+
+# Paper - PackRepository's constructor grew a LEADING (not trailing) DirectoryValidator parameter,
+# inserted BEFORE the existing RepositorySource... vararg. Verified against
+# fabric-resource-loader-v1's own compiled PackRepositoryMixin.class: its "construct" callback is
+# @Inject(method = "<init>").
+leadingArgsPatch	net/minecraft/server/packs/repository/PackRepository	[Lnet/minecraft/server/packs/repository/RepositorySource;	Lnet/minecraft/world/level/validation/DirectoryValidator;	<init>
+
+# ---- shadowFieldTypePatch: Paper narrowed a real, still-present field's TYPE without touching
+#      its name (the field itself never moved/renamed — only got redeclared as a subtype) ----
+#
+#   shadowFieldTypePatch	<targetClassInternalName>	<fieldName>	<oldTypeDescriptor>	<newTypeDescriptor>
+#
+# Paper - LevelChunk.level: Level -> ServerLevel (still-loaded chunks are always server-side).
+# Verified directly against Paper's own source patch (net/minecraft/world/level/chunk/
+# LevelChunk.java.patch): "-    public final Level level;" / "+    public final ServerLevel level;
+# // CraftBukkit - type". fabric-data-attachment-api-v1's own LevelChunkMixin @Shadows this field
+# at the old (Level) type.
+shadowFieldTypePatch	net/minecraft/world/level/chunk/LevelChunk	level	Lnet/minecraft/world/level/Level;	Lnet/minecraft/server/level/ServerLevel;
+
+# ---- callbackInfoReturnablePatch: Paper changed a target method's return type from void to a
+#      real value, so Mixin now requires CallbackInfoReturnable instead of plain CallbackInfo ----
+#
+#   callbackInfoReturnablePatch	<targetClassInternalName>	<targetMethodName>
+#
+# Paper - PlayerList.remove(ServerPlayer): void -> Component (returns the leave message actually
+# sent, nullable). Verified directly against Paper's own source patch (net/minecraft/server/
+# players/PlayerList.java.patch): "-    public void remove(final ServerPlayer player) {" /
+# "+    public net.kyori.adventure.text.@Nullable Component remove(final ServerPlayer player) {
+# // CraftBukkit - return string // Paper - return Component". fabric-entity-events-v1's own
+# PlayerListMixin has a "firePlayerLeaveEvent" @Inject(method = "remove") still declared with a
+# plain CallbackInfo.
+callbackInfoReturnablePatch	net/minecraft/server/players/PlayerList	remove
+
+# ---- callGrowthPatch: Paper appended trailing params to a method mods call DIRECTLY (not a
+#      callback Mixin invokes) — widens the mod's own matching @Shadow stub (if any) AND rewrites
+#      every real call site in the mod's class, pushing a value for each new param first ----
+#
+#   callGrowthPatch	<targetClassInternalName>	<methodName>	<oldParamsDescriptor>	<argSpec1>	[argSpec2 ...]
+#
+# argSpec is one of: "false" / "true" (boolean constant), "null:<typeDescriptor>" (null reference,
+# needs its own type since the call's operand descriptor must still name a concrete type), or
+# "field:<fieldOwnerInternalName>:<fieldName>:<fieldDescriptor>" (reads a PUBLIC field off the
+# method's own LAST original argument — safe specifically because it's public).
+
+# Paper - AbstractFurnaceBlockEntity.getTotalCookTime(ServerLevel, AbstractFurnaceBlockEntity) grew
+# two trailing params: RecipeType<? extends AbstractCookingRecipe>, double. Verified directly
+# against Leaf 26.2's own decompiled source: Paper's every internal call site passes literally
+# "entity.recipeType, entity.cookSpeedMultiplier" (both public fields on the entity - the method's
+# own last original arg), so that's exactly what we read too.
+callGrowthPatch	net/minecraft/world/level/block/entity/AbstractFurnaceBlockEntity	getTotalCookTime	Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/level/block/entity/AbstractFurnaceBlockEntity;	field:net/minecraft/world/level/block/entity/AbstractFurnaceBlockEntity:recipeType:Lnet/minecraft/world/item/crafting/RecipeType;	field:net/minecraft/world/level/block/entity/AbstractFurnaceBlockEntity:cookSpeedMultiplier:D
+
+# Paper - ServerGamePacketListenerImpl.tryPickItem(ItemStack) grew three trailing params:
+# @Nullable BlockPos, @Nullable Entity, boolean. Verified directly against Leaf 26.2's own
+# decompiled source. Unlike getTotalCookTime, these aren't derivable from an existing argument
+# (Paper's own two call sites pass genuinely different context-specific values - a block pos OR an
+# entity depending which one triggered the pick, plus packet.includeData()) - defaulting to
+# null/null/false is the closest equivalent to this method's old (pre-Paper) behavior, which never
+# had this context or the "include data" concept at all.
+callGrowthPatch	net/minecraft/server/network/ServerGamePacketListenerImpl	tryPickItem	Lnet/minecraft/world/item/ItemStack;	null:Lnet/minecraft/core/BlockPos;	null:Lnet/minecraft/world/entity/Entity;	false
+
+# ---- ASM: the simplest, most mechanical patch — a global, UNSCOPED descriptor swap ----
+#
+#   ASM	<oldDescriptor>	<newDescriptor>
+#
+# Both must be COMPLETE method descriptors, exactly as they'd appear in a class file (parens and
+# return type included). Every class this agent patches — every mod jar AND every jar-in-jar
+# nested inside one — gets scanned for this EXACT old descriptor string, appearing as either a
+# method's OWN declared descriptor or a call site's operand descriptor, with NO owner/name/class
+# check at all: found anywhere, replaced with the new one. Nothing else happens — no local
+# variable slot shifting, no value pushing. Only safe when:
+#   (a) the descriptor is distinctive enough that an unrelated accidental match elsewhere in some
+#       other mod is implausible, and
+#   (b) old and new have the same local-variable slot layout (e.g. a straight parameter/return
+#       TYPE substitution to a compatible supertype/interface — nothing is actually inserted or
+#       removed, so nothing needs shifting).
+# For a change that inserts brand-new real parameters needing actual values, use callGrowthPatch
+# instead; for the common "Paper appended/prepended real params to a MIXIN CALLBACK" shape, prefer
+# trailingArgsPatch/leadingArgsPatch/callbackInfoReturnablePatch (they're scoped to a specific
+# class+method, so they're safer, and they DO handle the slot shifting).
+
+# ---- annotationSelectorPatch: chỉnh CHUỖI selector bên trong annotation Mixin của mod (không
+#      phải descriptor bytecode) — dùng khi Paper thêm method mới khiến selector wildcard/regex
+#      của mod vô tình khớp nhầm ----
+#
+#   annotationSelectorPatch	<targetClassInternalName>	<oldSelectorString>	<newSelectorString>	[index|-]	[options]
+#
+# Options (ngăn cách bằng dấu phẩy, dạng key hoặc key=value):
+#   - atValue=HEAD        : ghi đè at.value (vd INVOKE -> HEAD)
+#   - removeAtTarget      : xoá phần tử at.target
+#   - methodDesc=<suffix> : ghi method = newSelector + suffix
+#   - forceTouch          : coi mọi annotation có phần tử "method" là "đã sửa" dù selector
+#                           không khớp — để options vẫn được áp dụng
+
+# Paper - CommandSourceStack giờ implement thêm io.papermc.paper.command.brigadier.
+# PaperCommandSourceStack, có method mặc định "withExecutor" trả về kiểu
+# io.papermc.paper.command.brigadier.CommandSourceStack. fabric-permission-api-v1's own
+# CommandSourceStackMixin dùng selector wildcard "/^with/ desc=/CommandSourceStack;$/" — regex
+# này chỉ so khớp theo TÊN ĐƠN GIẢN của return type (không phân biệt package), nên khớp nhầm luôn
+# cả method mới này. Thu hẹp lại regex desc để chỉ khớp đúng full package
+# "net.minecraft.commands.CommandSourceStack" như mod dự định ban đầu.
+annotationSelectorPatch	net/minecraft/commands/CommandSourceStack	/^with/ desc=/CommandSourceStack;$/	/^with/ desc=/Lnet\/minecraft\/commands\/CommandSourceStack;$/
+
+# Paper/Leaf - ChunkHolder.oldTicketLevel bị Leaf's Moonrise chunk-system chuyển hẳn vào field
+# private cùng tên bên trong NewChunkHolder (đối tượng con, truy cập qua accessor public có sẵn
+# moonrise$getRealChunkHolder()). Field không có getter public nên dùng reflection qua helper
+# getMoonriseOldTicketLevel(Object). fabric-lifecycle-events-v1's ChunkHolderMixin @Shadow field
+# này để đọc trong "decreaseLevel" — LƯU Ý: bản thân demoteFullChunk (nơi decreaseLevel inject
+# vào) đã bị Leaf stub thành throw UnsupportedOperationException(), không còn được gọi trong luồng
+# thật — patch này chỉ ngăn lỗi "field not located" lúc apply Mixin (giữ các @Inject KHÁC trong
+# cùng mixin class, ví dụ updateFutures$*, không bị mất theo), KHÔNG khôi phục lại sự kiện
+# FULL_CHUNK_STATUS_CHANGE thật sự.
+shadowFieldRedirectPatch	net/minecraft/server/level/ChunkHolder	oldTicketLevel	I	net/fabricmc/loader/impl/transformer/PaperModSignatureCompat	getMoonriseOldTicketLevel	(Ljava/lang/Object;)I
+
+leadingArgsPatch	net/minecraft/server/MinecraftServer	Lnet/minecraft/world/level/gamerules/GameRule;Ljava/lang/Object;	Lnet/minecraft/server/level/ServerLevel;	onGameRuleChanged
+
+mixinRetargetPatch	net/fabricmc/fabric/mixin/event/lifecycle/ChunkMapMixin	net/minecraft/server/level/ChunkMap	ca/spottedleaf/moonrise/patches/chunk_system/scheduling/NewChunkHolder
+
+methodBodyPatch	ca/spottedleaf/moonrise/patches/chunk_system/scheduling/NewChunkHolder	onChunkUnload	unloadStage2	Lorg/spongepowered/asm/mixin/injection/Inject;	HEAD	(Lca/spottedleaf/moonrise/patches/chunk_system/scheduling/NewChunkHolder$UnloadState;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V
+	INSTR	ALOAD	1
+	INSTR	INVOKEVIRTUAL	ca/spottedleaf/moonrise/patches/chunk_system/scheduling/NewChunkHolder$UnloadState.chunk:()Lnet/minecraft/world/level/chunk/ChunkAccess;
+	INSTR	ASTORE	2
+	INSTR	ALOAD	2
+	INSTR	ACONST_NULL
+	INSTR	RETURN
+
+methodBodyPatch	net/minecraft/world/entity/Entity	<init>	updateFluidInteraction	Lorg/spongepowered/asm/mixin/injection/Inject;	HEAD	(Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;)V
+	INSTR	ALOAD	0
+	INSTR	GETFIELD	net/fabricmc/fabric/mixin/content/registry/fluid/EntityMixin.fluidInteraction:Lnet/minecraft/world/entity/EntityFluidInteraction;
+#	INSTR	INVOKESTATIC	net/fabricmc/loader/impl/transformer/PaperModSignatureCompat.registerCustomTags:(Ljava/lang/Object;)V
+	INSTR	RETURN
+
+# Paper - Entity.saveWithoutId(ValueOutput) giờ chỉ delegate sang overload 4-tham-số
+# (ValueOutput, boolean includeAll, boolean includeNonSaveable, boolean forceSerialization).
+# fabric-data-attachment-api-v1's EntityMixin có callback "writeEntityAttachments"
+# @Inject(method = "saveWithoutId") viết trên overload 1-tham-số cũ — grow descriptor để
+# trỏ đúng sang overload thật (nơi addAdditionalSaveData thực sự được gọi).
+trailingArgsPatch	net/minecraft/world/entity/Entity	Lnet/minecraft/world/level/storage/ValueOutput;	ZZZ	saveWithoutId
+
+# Paper - addAdditionalSaveData(ValueOutput) cũng đổi descriptor thành (ValueOutput, boolean
+# includeAll). @At(target=...) của mod trỏ vào INVOKE cũ (1 tham số) nên không match nữa
+# sau khi patch trên đổi target method sang overload thật.
+annotationSelectorPatch	net/minecraft/world/entity/Entity	Lnet/minecraft/world/entity/Entity;addAdditionalSaveData(Lnet/minecraft/world/level/storage/ValueOutput;)V	Lnet/minecraft/world/entity/Entity;addAdditionalSaveData(Lnet/minecraft/world/level/storage/ValueOutput;Z)V
+
+# Paper - Entity.saveWithoutId hiện có 2 overload cùng tên ("saveWithoutId(ValueOutput)" delegate
+# rỗng + "saveWithoutId(ValueOutput,Z,Z,Z)" thật). @Inject(method="saveWithoutId") không ghi rõ
+# descriptor có thể khiến Mixin không chọn đúng overload dù callback đã grow descriptor khớp.
+# Ép rõ descriptor đầy đủ để loại bỏ mọi mơ hồ trong việc chọn target method.
+annotationSelectorPatch	net/minecraft/world/entity/Entity	saveWithoutId	saveWithoutId(Lnet/minecraft/world/level/storage/ValueOutput;ZZZ)V
+
+annotationSelectorPatch	net/minecraft/world/entity/Mob	convertTo(Lnet/minecraft/world/entity/EntityType;Lnet/minecraft/world/entity/ConversionParams;Lnet/minecraft/world/entity/EntitySpawnReason;Lnet/minecraft/world/entity/ConversionParams$AfterConversion;)Lnet/minecraft/world/entity/Mob;	convertTo(Lnet/minecraft/world/entity/EntityType;Lnet/minecraft/world/entity/ConversionParams;Lnet/minecraft/world/entity/EntitySpawnReason;Lnet/minecraft/world/entity/ConversionParams$CancellingAfterConversion;Lorg/bukkit/event/entity/EntityTransformEvent$TransformReason;Lorg/bukkit/event/entity/CreatureSpawnEvent$SpawnReason;)Lnet/minecraft/world/entity/Mob;	0
+
+annotationSelectorPatch	net/minecraft/world/entity/Mob	Lnet/minecraft/server/level/ServerLevel;addFreshEntity(Lnet/minecraft/world/entity/Entity;)Z	Lnet/minecraft/server/level/ServerLevel;addFreshEntity(Lnet/minecraft/world/entity/Entity;Lorg/bukkit/event/entity/CreatureSpawnEvent$SpawnReason;)Z	0
+
+annotationSelectorPatch	net/minecraft/world/entity/LivingEntity	addEffect(Lnet/minecraft/world/effect/MobEffectInstance;Lnet/minecraft/world/entity/Entity;)Z	addEffect(Lnet/minecraft/world/effect/MobEffectInstance;Lnet/minecraft/world/entity/Entity;Lorg/bukkit/event/entity/EntityPotionEffectEvent$Cause;Z)Z
+
+annotationSelectorPatch	net/minecraft/world/entity/LivingEntity	Lnet/minecraft/world/entity/EquipmentSlot;VALUES:Ljava/util/List;	Lnet/minecraft/world/entity/EquipmentSlot;VALUES_ARRAY:[Lnet/minecraft/world/entity/EquipmentSlot;
+
+# Paper/Leaf - hurtServer đã đổi số lượng/thứ tự lệnh gọi isDeadOrDying() (mod dùng ordinal=1,
+# nhưng bytecode Leaf hiện tại chỉ còn 1 lệnh gọi isDeadOrDying() trong hurtServer — lần gọi
+# "if (this.isDeadOrDying()) return false;" ở đầu đã bị tối ưu/merge, chỉ còn lần gọi thứ hai
+# trước checkTotemDeathProtection). Ép ordinal về 0 để match đúng lệnh gọi duy nhất còn lại.
+annotationSelectorPatch	net/minecraft/world/entity/LivingEntity	Lnet/minecraft/world/entity/LivingEntity;isDeadOrDying()Z	Lnet/minecraft/world/entity/LivingEntity;isDeadOrDying()Z	-	atOrdinal=0
+
+# Paper/Leaf - removeAllEffects() đã bỏ Map.clear() (chuyển sang iterator pattern),
+# khiến @WrapOperation target "Ljava/util/Map;clear()V" của mod fail. Thay hẳn callback
+# allowRemoveAllEffects bằng @WrapMethod trên removeAllEffects() không tham số, gọi
+# helper wrapAllowRemoveAllEffects qua reflection để bảo toàn logic ALLOW_EARLY_REMOVE.
+#
+# LƯU Ý: @WrapMethod bắt buộc callback trả ĐÚNG kiểu của method gốc (boolean).
+# Cột "newMethodSignature" (cột 6) là BẮT BUỘC — MixinExtras đọc generic signature
+# để nhận diện Operation<Boolean>; descriptor bị type erasure nên thiếu signature
+# sẽ báo lỗi "missing Operation parameter".
+#
+# Thứ tự cột:
+#   helperCallPatch <targetClass> <oldMethod> <newAnnotationDesc> <newMethodDesc> <newMethodSignature> <annotationMethodDesc> <helperOwner> <helperName> <helperDesc>
+
+#helperCallPatch	net/minecraft/world/entity/LivingEntity	removeAllEffects	Lcom/llamalad7/mixinextras/injector/wrapmethod/WrapMethod;	(Lcom/llamalad7/mixinextras/injector/wrapmethod/Operation;)Z	(Lcom/llamalad7/mixinextras/injector/wrapmethod/Operation<Ljava/lang/Boolean;>;)Z	()Z	net/fabricmc/loader/impl/transformer/PaperModSignatureCompat	wrapAllowRemoveAllEffects	(Ljava/lang/Object;Ljava/lang/Object;)Z
+
+methodBodyPatch	net/minecraft/world/entity/LivingEntity	removeAllEffects	removeAllEffects	Lorg/spongepowered/asm/mixin/injection/Inject;	HEAD	(Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;)V	-	Lorg/spongepowered/asm/mixin/injection/Inject;
+	INSTR	ALOAD	0
+	INSTR	ALOAD	1
+	INSTR	INVOKESTATIC	net/fabricmc/loader/impl/transformer/PaperModSignatureCompat.handleRemoveAllEffects:(Ljava/lang/Object;Ljava/lang/Object;)V
+	INSTR	RETURN
+
+methodBodyPatch	net/minecraft/world/entity/LivingEntity	removeAllEffects	removeAllEffects	Lorg/spongepowered/asm/mixin/injection/Inject;	HEAD	(Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;)V	-	Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;
+	INSTR	RETURN
+
+annotationSelectorPatch	net/minecraft/world/entity/LivingEntity	Lcom/google/common/collect/Maps;newHashMap(Ljava/util/Map;)Ljava/util/HashMap;	Ljava/util/Map;values()Ljava/util/Collection;	-	methodOverride=removeAllEffects(Lorg/bukkit/event/entity/EntityPotionEffectEvent$Cause;)Z
+
+# Paper/Leaf - BuiltInRegistries.bootStrap() grew a parameter: java.lang.Runnable, run sau khi
+# tạo nội dung registry (dùng để chạy OptionallyFlatBedrockConditionSource.bootstrap() ở Bootstrap
+# class). fabric-registry-sync-v0's own BootstrapMixin @Redirects toàn bộ call này bằng
+# delayRegistryFreeze() 0-tham-số (chỉ gọi createContents(), cố tình bỏ qua freeze()/validate()
+# để trì hoãn đóng băng registry cho registry-sync). Grow descriptor để nhận Runnable và gọi nó,
+# giữ đúng thứ tự vanilla thật (createContents() rồi mới runnable.run()) để không làm mất tác dụng
+# của callback Paper mới thêm, đồng thời vẫn giữ nguyên ý đồ "trì hoãn freeze" của mod.
+redirectTrailingArgsPatch	net/minecraft/core/registries/BuiltInRegistries		V	Ljava/lang/Runnable;	delayRegistryFreeze	java/lang/Runnable	run	()V
+
+redirectTrailingArgsPatch	net/minecraft/server/Bootstrap		V	Ljava/lang/Runnable;	bootStrap	java/lang/Runnable	run	()V
+
+annotationSelectorPatch	net/minecraft/server/Bootstrap	Lnet/minecraft/core/registries/BuiltInRegistries;bootStrap()V	Lnet/minecraft/core/registries/BuiltInRegistries;bootStrap(Ljava/lang/Runnable;)V	-
+
+methodBodyPatch	net/minecraft/server/level/ServerPlayer	fabric_closeContainerScreenIfAllowed	openMenu	Lorg/spongepowered/asm/mixin/injection/Inject;	HEAD	(Lnet/minecraft/world/MenuProvider;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;)V	-	Lorg/spongepowered/asm/mixin/injection/Redirect;
+	INSTR	ALOAD	1
+	INSTR	IFNULL	L_SKIP
+	INSTR	ALOAD	1
+	INSTR	INVOKEINTERFACE	net/minecraft/world/MenuProvider.shouldCloseCurrentScreen:()Z
+	INSTR	IFEQ	L_SKIP
+	INSTR	ALOAD	0
+	INSTR	GETFIELD	net/minecraft/world/entity/player/Player.containerMenu:Lnet/minecraft/world/inventory/AbstractContainerMenu;
+	INSTR	ALOAD	0
+	INSTR	GETFIELD	net/minecraft/world/entity/player/Player.inventoryMenu:Lnet/minecraft/world/inventory/InventoryMenu;
+	INSTR	IF_ACMPEQ	L_SKIP
+	INSTR	ALOAD	0
+	INSTR	INVOKEVIRTUAL	net/minecraft/server/level/ServerPlayer.closeContainer:()V
+	INSTR	LABEL	L_SKIP
+	INSTR	RETURN
+
+# có mods sài logic bên startSleepInBed có mods sài logic bên getBedResult
+#annotationSelectorPatch	net/minecraft/server/level/ServerPlayer	startSleepInBed	getBedResult	-
+
+annotationSelectorPatch	net/minecraft/server/level/ServerPlayer	Ljava/util/List;isEmpty()Z	Ljava/util/List;isEmpty()Z	-	methodOverride=getBedResult(Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/Direction;)Lcom/mojang/datafixers/util/Either;
+
+annotationSelectorPatch	net/minecraft/server/level/ServerPlayer	Lnet/minecraft/server/level/ServerPlayer;setRespawnPosition(Lnet/minecraft/server/level/ServerPlayer$RespawnConfig;Z)V	Lnet/minecraft/server/level/ServerPlayer;setRespawnPosition(Lnet/minecraft/server/level/ServerPlayer$RespawnConfig;ZLcom/destroystokyo/paper/event/player/PlayerSetSpawnEvent$Cause;)V	-
+
+# Grow lời gọi original.call(player, spawnPoint, sendMessage) trong onSetSpawnPoint's own compiled
+# @WrapOperation callback lên 4 phần tử, thêm hằng PlayerSetSpawnEvent.Cause.BED ở cuối — khớp với
+# setRespawnPosition(RespawnConfig, boolean, Cause) thật của Paper. Filter bằng hasWrapOperationAnnotation
+# nên sẽ KHÔNG đụng tới bất kỳ @Inject nào khác cũng target "getBedResult" (ví dụ check monster nearby).
+operationCallGrowthPatch	net/minecraft/server/level/ServerPlayer	getBedResult	static:com/destroystokyo/paper/event/player/PlayerSetSpawnEvent$Cause:BED:Lcom/destroystokyo/paper/event/player/PlayerSetSpawnEvent$Cause;
+
+# onSetSpawnPoint: mod gốc viết method="startSleepInBed" (đúng với Fabric — nơi setRespawnPosition
+# từng nằm). Paper đã dời hẳn lời gọi setRespawnPosition sang method mới getBedResult(pos, direction)
+# khi refactor startSleepInBed. Do đó KHÔNG chỉ đổi at.target — phải retarget cả method= sang
+# getBedResult (giống hệt cách hasNoMonstersNearby đã làm với isEmpty() ở dòng annotationSelectorPatch
+# bên dưới). Lọc bằng requiredOldAtTargetContains="setRespawnPosition" để không đụng
+# redirectSleepDirection (cùng method="startSleepInBed", cùng @WrapOperation, nhưng at.target khác:
+# BlockState.getValue — cái này giữ nguyên vì getValue vẫn thật sự nằm trong startSleepInBed).
+injectorRewritePatch	net/minecraft/server/level/ServerPlayer	startSleepInBed	Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;	setRespawnPosition	Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;	getBedResult(Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/Direction;)Lcom/mojang/datafixers/util/Either;	INVOKE	Lnet/minecraft/server/level/ServerPlayer;setRespawnPosition(Lnet/minecraft/server/level/ServerPlayer$RespawnConfig;ZLcom/destroystokyo/paper/event/player/PlayerSetSpawnEvent$Cause;)Z	(Lnet/minecraft/server/level/ServerPlayer;Lnet/minecraft/server/level/ServerPlayer$RespawnConfig;ZLcom/destroystokyo/paper/event/player/PlayerSetSpawnEvent$Cause;Lcom/llamalad7/mixinextras/injector/wrapoperation/Operation;)Z	net/fabricmc/loader/impl/transformer/PaperModSignatureCompat	handleSetRespawnPosition	([Ljava/lang/Object;)Ljava/lang/Object;
+
+annotationSelectorPatch	net/minecraft/server/MinecraftServer	Lnet/minecraft/server/level/ServerLevel;close()V	Lnet/minecraft/server/level/ServerChunkCache;deactivateTicketsOnClosing()V	-	renameLocal=level:world
+
+leadingArgsPatch	net/minecraft/server/MinecraftServer	Ljava/lang/Thread;Lnet/minecraft/world/level/storage/LevelStorageSource$LevelStorageAccess;Lnet/minecraft/server/packs/repository/PackRepository;Lnet/minecraft/server/WorldStem;Ljava/util/Optional;Ljava/net/Proxy;Lcom/mojang/datafixers/DataFixer;Lnet/minecraft/server/Services;Lnet/minecraft/server/level/progress/LevelLoadListener;ZLnet/minecraft/server/notifications/NotificationManager;	Ljoptsimple/OptionSet;Lnet/minecraft/server/WorldLoader$DataLoadContext;	<init>
+
+annotationSelectorPatch	net/minecraft/commands/Commands	<init>	<init>(Lnet/minecraft/commands/Commands$CommandSelection;Lnet/minecraft/commands/CommandBuildContext;Z)V	-
+trailingArgsPatch	net/minecraft/commands/Commands	Lnet/minecraft/commands/Commands$CommandSelection;Lnet/minecraft/commands/CommandBuildContext;	Z	<init>
+
+annotationSelectorPatch	net/minecraft/world/level/pathfinder/WalkNodeEvaluator	getPathTypeFromState	getPathTypeFromState(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/level/pathfinder/PathType;	-
+
+annotationSelectorPatch	net/minecraft/world/level/pathfinder/WalkNodeEvaluator	Lnet/minecraft/world/level/block/state/BlockState;getBlock()Lnet/minecraft/world/level/block/Block;	Lnet/minecraft/world/level/pathfinder/WalkNodeEvaluator;getPathTypeFromState(Lnet/minecraft/world/level/block/state/BlockState;)Lnet/minecraft/world/level/pathfinder/PathType;	-	atValue=INVOKE
+
+splitWrapOperationPatch	net/minecraft/network/protocol/common/custom/CustomPacketPayload$1	wrapGetCodec	Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;	INVOKE	Lnet/minecraft/network/protocol/common/custom/CustomPacketPayload$1;findCodec(Lnet/minecraft/resources/Identifier;)Lnet/minecraft/network/codec/StreamCodec;
+	VARIANT	writeCap(Lnet/minecraft/network/FriendlyByteBuf;Lnet/minecraft/network/protocol/common/custom/CustomPacketPayload$Type;Lnet/minecraft/network/protocol/common/custom/CustomPacketPayload;)V	(Lnet/minecraft/network/codec/StreamCodec;Lnet/minecraft/resources/Identifier;Lcom/llamalad7/mixinextras/injector/wrapoperation/Operation;Lnet/minecraft/network/FriendlyByteBuf;Lnet/minecraft/network/protocol/common/custom/CustomPacketPayload$Type;Lnet/minecraft/network/protocol/common/custom/CustomPacketPayload;)Lnet/minecraft/network/codec/StreamCodec;	net/fabricmc/loader/impl/transformer/PaperModSignatureCompat	wrapGetCodecForWriteCap	([Ljava/lang/Object;)Ljava/lang/Object;
+	VARIANT	lambda$decode$0(Lnet/minecraft/resources/Identifier;Lnet/minecraft/network/FriendlyByteBuf;)Lnet/minecraft/network/protocol/common/custom/CustomPacketPayload;	(Lnet/minecraft/network/codec/StreamCodec;Lnet/minecraft/resources/Identifier;Lcom/llamalad7/mixinextras/injector/wrapoperation/Operation;Lnet/minecraft/resources/Identifier;Lnet/minecraft/network/FriendlyByteBuf;)Lnet/minecraft/network/codec/StreamCodec;	net/fabricmc/loader/impl/transformer/PaperModSignatureCompat	wrapGetCodecForDecodeLambda	([Ljava/lang/Object;)Ljava/lang/Object;
+
+annotationSelectorPatch	net/minecraft/world/entity/player/Inventory	addAndPickItem(Lnet/minecraft/world/item/ItemStack;)V	addAndPickItem(Lnet/minecraft/world/item/ItemStack;I)V
+annotationSelectorPatch	net/minecraft/world/entity/player/Inventory	pickSlot(I)V	pickSlot(II)V
+trailingArgsPatch	net/minecraft/world/entity/player/Inventory	I	I	pickSlot
+
+annotationSelectorPatch	net/minecraft/server/MinecraftServer	Lnet/minecraft/server/MinecraftServer;onServerExit()V	Lnet/minecraft/server/MinecraftServer;stopServer()V
+
+annotationSelectorPatch	net/minecraft/server/dedicated/DedicatedServer	Lnet/minecraft/server/dedicated/DedicatedServer;loadLevel()V	Lnet/minecraft/server/dedicated/DedicatedServer;loadLevel(Ljava/lang/String;)V
+
+ASM	(Lnet/minecraft/resources/RegistryOps;Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/concurrent/Executor;Lnet/minecraft/world/level/storage/loot/LootDataType;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;)V	(Lnet/minecraft/resources/RegistryOps;Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/concurrent/Executor;Lio/papermc/paper/registry/data/util/Conversions;Lnet/minecraft/world/level/storage/loot/LootDataType;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;)V
+ASM	(Lnet/minecraft/resources/RegistryOps;Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/concurrent/Executor;Lnet/minecraft/world/level/storage/loot/LootDataType<TT;>;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable<Ljava/util/concurrent/CompletableFuture;>;)V	(Lnet/minecraft/resources/RegistryOps;Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/concurrent/Executor;Lio/papermc/paper/registry/data/util/Conversions;Lnet/minecraft/world/level/storage/loot/LootDataType<TT;>;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable<Ljava/util/concurrent/CompletableFuture;>;)V
+
+annotationSelectorPatch	net/minecraft/world/entity/Entity	Lnet/minecraft/server/level/ServerLevel;addFreshEntity(Lnet/minecraft/world/entity/Entity;)Z	Lnet/minecraft/server/level/ServerLevel;addFreshEntity(Lnet/minecraft/world/entity/Entity;)Z	-	methodOverride=spawnAtLocation(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/entity/item/ItemEntity;)Lnet/minecraft/world/entity/item/ItemEntity;
+
+ASM	(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/entity/Entity;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V	(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/entity/Entity;ZLorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V 
+
+injectorRewritePatch	net/minecraft/server/level/ServerLevel	explode	Lorg/spongepowered/asm/mixin/injection/Inject;	explode	Lorg/spongepowered/asm/mixin/injection/Inject;	explode0(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/damagesource/DamageSource;Lnet/minecraft/world/level/ExplosionDamageCalculator;DDDFZLnet/minecraft/world/level/Level$ExplosionInteraction;Lnet/minecraft/core/particles/ParticleOptions;Lnet/minecraft/core/particles/ParticleOptions;Lnet/minecraft/util/random/WeightedList;Lnet/minecraft/core/Holder;Ljava/util/function/Consumer;)Lnet/minecraft/world/level/ServerExplosion;	INVOKE	Lnet/minecraft/world/level/ServerExplosion;explode()I	(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/damagesource/DamageSource;Lnet/minecraft/world/level/ExplosionDamageCalculator;DDDFZLnet/minecraft/world/level/Level$ExplosionInteraction;Lnet/minecraft/core/particles/ParticleOptions;Lnet/minecraft/core/particles/ParticleOptions;Lnet/minecraft/util/random/WeightedList;Lnet/minecraft/core/Holder;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;Lnet/minecraft/world/level/ServerExplosion;)V
+
+annotationSelectorPatch	net/minecraft/server/level/ServerLevel	explode	explode0(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/damagesource/DamageSource;Lnet/minecraft/world/level/ExplosionDamageCalculator;DDDFZLnet/minecraft/world/level/Level$ExplosionInteraction;Lnet/minecraft/core/particles/ParticleOptions;Lnet/minecraft/core/particles/ParticleOptions;Lnet/minecraft/util/random/WeightedList;Lnet/minecraft/core/Holder;Ljava/util/function/Consumer;)Lnet/minecraft/world/level/ServerExplosion;
+ASM	(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/damagesource/DamageSource;Lnet/minecraft/world/level/ExplosionDamageCalculator;DDDFZLnet/minecraft/world/level/Level$ExplosionInteraction;Lnet/minecraft/core/particles/ParticleOptions;Lnet/minecraft/core/particles/ParticleOptions;Lnet/minecraft/util/random/WeightedList;Lnet/minecraft/core/Holder;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V	(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/damagesource/DamageSource;Lnet/minecraft/world/level/ExplosionDamageCalculator;DDDFZLnet/minecraft/world/level/Level$ExplosionInteraction;Lnet/minecraft/core/particles/ParticleOptions;Lnet/minecraft/core/particles/ParticleOptions;Lnet/minecraft/util/random/WeightedList;Lnet/minecraft/core/Holder;Ljava/util/function/Consumer;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;)V
+annotationSelectorPatch	net/minecraft/server/level/ServerLevel	net/minecraft/world/clock/ServerClockManager.moveToTimeMarker(Lnet/minecraft/core/Holder;Lnet/minecraft/resources/ResourceKey;)Z	Lnet/minecraft/world/clock/ServerClockManager;getTotalTicks(Lnet/minecraft/core/Holder;)J	0	atValue=INVOKE
+annotationSelectorPatch	net/minecraft/server/level/ServerLevel	net/minecraft/world/clock/ServerClockManager.moveToTimeMarker(Lnet/minecraft/core/Holder;Lnet/minecraft/resources/ResourceKey;)Z	Lnet/minecraft/world/clock/ServerClockManager;setTotalTicks(Lnet/minecraft/core/Holder;J)V	1	atValue=INVOKE
+annotationSelectorPatch	net/minecraft/world/RandomizableContainer	Lnet/minecraft/server/ReloadableServerRegistries$Holder;getLootTable(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/world/level/storage/loot/LootTable;	Lnet/minecraft/world/RandomizableContainer;setLootTable(Lnet/minecraft/resources/ResourceKey;)V	-	atValue=INVOKE,atOrdinal=1
+ASM	Lnet/minecraft/world/level/block/entity/HopperBlockEntity;getAttachedContainer(Lnet/minecraft/world/level/Level;Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/entity/HopperBlockEntity;)Lnet/minecraft/world/Container;	Lnet/minecraft/world/level/block/entity/HopperBlockEntity;getInsertInventory(Lnet/minecraft/world/level/Level;)Lnet/minecraft/world/Container;
+annotationSelectorPatch	net/minecraft/world/level/NaturalSpawner	spawnCategoryForPosition(Lnet/minecraft/world/entity/MobCategory;Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/level/chunk/ChunkAccess;Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/NaturalSpawner$SpawnPredicate;Lnet/minecraft/world/level/NaturalSpawner$AfterSpawnCallback;)V	spawnCategoryForPosition(Lnet/minecraft/world/entity/MobCategory;Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/level/chunk/ChunkAccess;Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/NaturalSpawner$SpawnPredicate;Lnet/minecraft/world/level/NaturalSpawner$AfterSpawnCallback;ILjava/util/function/Consumer;Lnet/minecraft/world/level/chunk/ChunkGenerator;)I
+annotationSelectorPatch	net/minecraft/world/entity/LivingEntity	actuallyHurt	hurtServer	-
+trailingArgsPatch	net/minecraft/world/entity/LivingEntity	Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/damagesource/DamageSource;F	Lorg/bukkit/event/entity/EntityDamageEvent;Z	alexsmobs$livingDamage
+callbackInfoReturnablePatch	net/minecraft/world/entity/LivingEntity	hurtServer
+trailingArgsPatch	net/minecraft/world/inventory/BrewingStandMenu$PotionSlot	Lnet/minecraft/world/item/ItemStack;	Lnet/minecraft/world/item/alchemy/PotionBrewing;	mayPlaceItem
+annotationSelectorPatch	net/minecraft/world/entity/player/Player	actuallyHurt(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/damagesource/DamageSource;F)V	actuallyHurt(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/damagesource/DamageSource;FLorg/bukkit/event/entity/EntityDamageEvent;)Z	-
+
+trailingArgsPatch	net/minecraft/world/entity/player/Player	Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/damagesource/DamageSource;F	Lorg/bukkit/event/entity/EntityDamageEvent;	actuallyHurt
+
+callbackInfoReturnablePatch	net/minecraft/world/entity/player/Player	actuallyHurt
+
+ASM	actuallyHurt(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/damagesource/DamageSource;F)V	actuallyHurt(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/damagesource/DamageSource;FLorg/bukkit/event/entity/EntityDamageEvent;)Z
+
+annotationSelectorPatch	net/minecraft/server/MinecraftServer	Lnet/minecraft/server/MinecraftServer;<init>(Ljava/lang/Thread;Lnet/minecraft/world/level/storage/LevelStorageSource$LevelStorageAccess;Lnet/minecraft/server/packs/repository/PackRepository;Lnet/minecraft/server/WorldStem;Ljava/util/Optional;Ljava/net/Proxy;Lcom/mojang/datafixers/DataFixer;Lnet/minecraft/server/Services;Lnet/minecraft/server/level/progress/LevelLoadListener;ZLnet/minecraft/server/notifications/NotificationManager;)V	<init>	-
+
+leadingArgsPatch	net/minecraft/server/MinecraftServer	Ljava/lang/Thread;Lnet/minecraft/world/level/storage/LevelStorageSource$LevelStorageAccess;Lnet/minecraft/server/packs/repository/PackRepository;Lnet/minecraft/server/WorldStem;Ljava/util/Optional;Ljava/net/Proxy;Lcom/mojang/datafixers/DataFixer;Lnet/minecraft/server/Services;Lnet/minecraft/server/level/progress/LevelLoadListener;ZLnet/minecraft/server/notifications/NotificationManager;	Ljoptsimple/OptionSet;Lnet/minecraft/server/WorldLoader$DataLoadContext;	<init>
+
+annotationSelectorPatch	net/minecraft/server/MinecraftServer	<init>	<init>(Ljoptsimple/OptionSet;Lnet/minecraft/server/WorldLoader$DataLoadContext;Ljava/lang/Thread;Lnet/minecraft/world/level/storage/LevelStorageSource$LevelStorageAccess;Lnet/minecraft/server/packs/repository/PackRepository;Lnet/minecraft/server/WorldStem;Ljava/util/Optional;Ljava/net/Proxy;Lcom/mojang/datafixers/DataFixer;Lnet/minecraft/server/Services;Lnet/minecraft/server/level/progress/LevelLoadListener;ZLnet/minecraft/server/notifications/NotificationManager;)V	-
+
+annotationSelectorPatch	net/minecraft/world/level/block/entity/HopperBlockEntity	Lnet/minecraft/world/level/block/entity/HopperBlockEntity;getAttachedContainer(Lnet/minecraft/world/level/Level;Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/entity/HopperBlockEntity;)Lnet/minecraft/world/Container;	Lnet/minecraft/world/level/block/entity/HopperBlockEntity;getInsertInventory(Lnet/minecraft/world/level/Level;)Lnet/minecraft/world/Container;	-	renameLocal=container:container2
+
+annotationSelectorPatch	net/minecraft/server/players/PlayerList	reloadResources	reloadTagData	-
+
+CLASS	ca/spottedleaf/moonrise/patches/chunk_system/scheduling/NewChunkHolder	ca/spottedleaf/moonrise/patches/chunk_system/scheduling/NewChunkHolder
+	FIELD	Lnet/minecraft/server/level/ServerLevel;	level	Lnet/minecraft/server/level/ServerLevel;	world
+
+mixinRetargetPatch	net/fabricmc/fabric/mixin/event/lifecycle/ChunkHolderMixin	net/minecraft/server/level/ChunkHolder	ca/spottedleaf/moonrise/patches/chunk_system/scheduling/NewChunkHolder
+
+annotationSelectorPatch	net/minecraft/server/level/ChunkHolder	updateFutures	handleFullStatusChange	-
+
+annotationSelectorPatch	net/minecraft/server/MinecraftServer	createLevels	addLevel	-
+
+annotationSelectorPatch	net/minecraft/server/MinecraftServer	Ljava/util/Map;put(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;	Ljava/util/Map;put(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;	-	atValue=INVOKE
+
+# Paper/Leaf - fabric-tag-api-v1 (Fabric API 0.161+) TagLoaderMixin có thêm callback
+# "loadTagsForRegistry": @WrapOperation(method = "loadTagsForRegistry(ResourceManager;WritableRegistry)V",
+# at = INVOKE TagLoader.loadTagsForRegistry(ResourceManager;ResourceKey;ElementLookup)Map) chỉ để gọi
+# registry.bindTags(...) ("sửa lỗi có thể là bug vanilla khiến tag của loot table không được nạp").
+# Paper viết lại đường này (thêm tham số Cause + registry, overload 3-tham-số cũ chỉ còn delegate) nên
+# Mixin không tìm thấy target => InjectionError "(0/1) succeeded" làm CRASH lúc khởi động
+# (Mixin transformation of net.minecraft.tags.TagLoader failed). Đây là tính năng phụ, nên biến callback
+# thành no-op vô hại (@Inject HEAD + RETURN) trên loadTagsFromNetwork — method static có ở cả vanilla
+# lẫn Paper — thay vì cố port y nguyên. Hệ quả: tag gắn trên loot table có thể không được bind qua
+# đường 2-tham-số (hiếm gặp); các callback khác của TagLoaderMixin (build/load/tryBuildTag) KHÔNG đổi.
+methodBodyPatch	net/minecraft/tags/TagLoader	loadTagsForRegistry	loadTagsFromNetwork	Lorg/spongepowered/asm/mixin/injection/Inject;	HEAD	(Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;)V	-	Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;
+	INSTR	RETURN
+
+# ---- bridgeMethodPatch: thêm method CẦU mang descriptor VANILLA vào class của game (chạy TRƯỚC Mixin) ----
+#
+#   bridgeMethodPatch	<classInternalName>	<methodName>	<vanillaDescriptor>	<paperDescriptor>
+#
+# Paper/CraftBukkit đổi vài descriptor vanilla (thường void -> int/boolean). @Invoker/@Shadow/@Accessor của mod
+# vẫn ghi descriptor vanilla => Mixin báo "No candidates were found matching ..." lúc APPLY. Khác @Inject,
+# lỗi này KHÔNG né được bằng require=0 và làm sập server ngay lúc bootstrap. Patch này thêm vào class đích một
+# method public synthetic <methodName><vanillaDescriptor> chỉ để gọi <methodName><paperDescriptor> rồi bỏ kết quả.
+# Chỉ hỗ trợ trường hợp vanilla trả void và tham số giống hệt. Không thêm gì nếu class đã có descriptor vanilla.
+
+# Paper - ServerPlayer.nextContainerCounter(): "private void" -> "public int" (CraftBukkit void -> int).
+# immersive_aircraft's ServerPlayerEntityMixin có @Invoker("nextContainerCounter") void ic$nextContainerCounter()
+# => InvalidAccessorException => MixinApplyError => server không khởi động được.
+bridgeMethodPatch	net/minecraft/server/level/ServerPlayer	nextContainerCounter	()V	()I
+
+# Cùng kiểu đổi descriptor trong patch của Paper (đã đối chiếu từng cái với source Paper 26.1.2); mod nào có
+# @Invoker/@Shadow vào các method này cũng sẽ cần bridge:
+#   Entity.removePassenger(Entity)   void -> boolean     EnderDragonFight.tryRespawn()      void -> boolean
+#   ServerPlayer.drop(boolean)       void -> boolean     EnderDragonFight.spawnNewGateway() void -> boolean
+bridgeMethodPatch	net/minecraft/world/entity/Entity	removePassenger	(Lnet/minecraft/world/entity/Entity;)V	(Lnet/minecraft/world/entity/Entity;)Z
+bridgeMethodPatch	net/minecraft/server/level/ServerPlayer	drop	(Z)V	(Z)Z
+bridgeMethodPatch	net/minecraft/world/level/dimension/end/EnderDragonFight	tryRespawn	()V	()Z
+bridgeMethodPatch	net/minecraft/world/level/dimension/end/EnderDragonFight	spawnNewGateway	()V	()Z
+
+trailingArgsPatch	net/minecraft/world/entity/monster/EnderMan	Lnet/minecraft/world/entity/LivingEntity;	Lorg/bukkit/event/entity/EntityTargetEvent$TargetReason;	setTarget
+callbackInfoReturnablePatch	net/minecraft/world/entity/monster/EnderMan	setTarget
