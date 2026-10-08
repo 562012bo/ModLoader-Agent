@@ -38,7 +38,6 @@ This is **not** a full Fabric server. It's a compatibility layer for **simple to
 
 - ✅ Loads Fabric mods (`.jar` with `fabric.mod.json`) on Leaf
 - ✅ Supports Fabric API (all modules) + Mixin + MixinExtras
-- ✅ Access Widener (partial support)
 - ✅ Bridges Bukkit ↔ Fabric events
 - ✅ Registers Fabric mods as Bukkit plugins (visible in `/plugins`)
 - ✅ Custom mapping system (`mappings.tiny`) for Paper/Leaf ↔ Fabric compat
