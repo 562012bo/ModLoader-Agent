@@ -1,6 +1,6 @@
 # ModLoader-Agent
 
-> **Run Fabric mods on Leaf servers** — a compatibility layer that bridges Fabric mods and Paper/Leaf.
+> **Run Fabric mods on Leaf servers** — a compatibility layer that bridges Fabric mods and Leaf.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Minecraft](https://img.shields.io/badge/Minecraft-26.2-green.svg)](https://www.minecraft.net/)
