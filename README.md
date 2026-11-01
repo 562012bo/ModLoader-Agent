@@ -20,6 +20,15 @@
 
 ---
 
+## ⚠️ Incompatible
+
+- VMP
+- TT20
+- Lithium
+- C2ME
+
+---
+
 ## 📖 What is ModLoader-Agent?
 
 ModLoader-Agent is a **Java agent** that allows you to run **Fabric mods** on a **Leaf server** — without switching to a full Fabric server.
