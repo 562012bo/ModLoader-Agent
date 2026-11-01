@@ -505,6 +505,7 @@ final class KnotClassDelegate<T extends ClassLoader & ClassLoaderAccess> impleme
 		// hook silently never fixed that read. See PaperModSignatureCompat's own class javadoc.
 		if (result != null) {
 			result = net.fabricmc.loader.impl.transformer.PaperModSignatureCompat.fixIfNeeded(name, result);
+			result = GameClassPatcher.applyMixinVisible(name, result);
 		}
 
 		return result;

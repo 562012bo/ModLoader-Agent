@@ -93,13 +93,13 @@ public final class AttributeSupplierEarlyInitTransformer implements ClassFileTra
 			}
 
 			if (patched == 0) {
-				LOGGER.warning(className + ": 'new AttributeInstanceArrayMap(Map)' not found - NOT patched (no Leaf attribute map in this build?)");
+				//LOGGER.warning(className + ": 'new AttributeInstanceArrayMap(Map)' not found - NOT patched (no Leaf attribute map in this build?)");
 				return null;
 			}
 
 			ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS);
 			cn.accept(w);
-			LOGGER.info("PATCHED " + className + " (attribute map falls back to HashMap before the registries are filled, for early Fabric registrations)");
+			//LOGGER.info("PATCHED " + className + " (attribute map falls back to HashMap before the registries are filled, for early Fabric registrations)");
 			return w.toByteArray();
 		} catch (Throwable t) {
 			LOGGER.log(Level.WARNING, "Failed to patch " + className, t);

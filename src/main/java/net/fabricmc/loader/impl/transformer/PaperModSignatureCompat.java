@@ -110,24 +110,123 @@ public final class PaperModSignatureCompat {
 	}
 
 	private static final class SafeClassWriter extends ClassWriter {
+		/** header data of a class read from its bytes (no class loading) */
+		private static final class Info {
+			final String superName;
+			final String[] interfaces;
+			final boolean isInterface;
+
+			Info(String superName, String[] interfaces, boolean isInterface) {
+				this.superName = superName;
+				this.interfaces = interfaces;
+				this.isInterface = isInterface;
+			}
+		}
+
+		private static final Info MISSING = new Info(null, new String[0], false);
+		private static final Map<String, Info> INFO = new java.util.concurrent.ConcurrentHashMap<>();
+
 		SafeClassWriter(int flags) {
 			super(flags);
 		}
 
+		/**
+		 * Reads the class header from the raw class bytes via the launcher (mod classes and game classes, which the ClassWriter's
+		 * own classloader can't see), falling back to the system loader's resources (JDK classes). Never loads/initialises a class.
+		 */
+		private static Info info(String internalName) {
+			Info cached = INFO.get(internalName);
+
+			if (cached != null) return cached == MISSING ? null : cached;
+
+			byte[] bytes = null;
+
+			try {
+				bytes = FabricLauncherBase.getLauncher().getClassByteArray(internalName.replace('/', '.'), false);
+			} catch (Throwable ignored) {
+				// launcher not ready / class unknown to it
+			}
+
+			if (bytes == null) {
+				try (InputStream in = ClassLoader.getSystemResourceAsStream(internalName + ".class")) {
+					if (in != null) bytes = in.readAllBytes();
+				} catch (Throwable ignored) {
+					// fall through
+				}
+			}
+
+			Info result = MISSING;
+
+			if (bytes != null) {
+				try {
+					ClassReader cr = new ClassReader(bytes);
+					result = new Info(cr.getSuperName(), cr.getInterfaces(), (cr.getAccess() & Opcodes.ACC_INTERFACE) != 0);
+				} catch (Throwable ignored) {
+					// unreadable: MISSING
+				}
+			}
+
+			INFO.put(internalName, result);
+			return result == MISSING ? null : result;
+		}
+
+		private static boolean isAssignable(String sup, String sub) {
+			if (sup.equals(sub) || sup.equals("java/lang/Object")) return true;
+
+			Info i = info(sub);
+
+			if (i == null) throw new IllegalStateException("unresolved class " + sub);
+
+			if (i.superName != null && isAssignable(sup, i.superName)) return true;
+
+			for (String itf : i.interfaces) {
+				if (isAssignable(sup, itf)) return true;
+			}
+
+			return false;
+		}
+
 		@Override
 		protected String getCommonSuperClass(final String type1, final String type2) {
+			// 1) from the class bytes: same result as ASM's Class.forName based version, for ANY visible class
+			try {
+				if (isAssignable(type1, type2)) return type1;
+				if (isAssignable(type2, type1)) return type2;
+
+				Info a = info(type1);
+				Info b = info(type2);
+
+				if (a == null || b == null) throw new IllegalStateException("unresolved");
+
+				if (a.isInterface || b.isInterface) return "java/lang/Object";
+
+				String c = type1;
+
+				do {
+					Info ci = info(c);
+
+					if (ci == null || ci.superName == null) return "java/lang/Object";
+
+					c = ci.superName;
+				} while (!isAssignable(c, type2));
+
+				return c;
+			} catch (RuntimeException e) {
+				// 2) old behaviour
+			}
+
 			try {
 				return super.getCommonSuperClass(type1, type2);
 			} catch (TypeNotPresentException | LinkageError e) {
 				Log.warn(LogCategory.GAME_PATCH, "Could not resolve common superclass "
 						+ "of %s and %s while recomputing stack map frames (a class/"
 						+ "interface referenced here isn't visible to the patcher's "
-						+ "own classloader) — falling back to java/lang/Object", type1, type2);
+						+ "own classloader) \u2014 falling back to java/lang/Object", type1, type2);
 				return "java/lang/Object";
 			}
 		}
 	}
-	
+
 	static final class SignaturePatch {
 		final String targetClassInternalName;
 		final String oldArgPrefix;
@@ -281,28 +380,6 @@ public final class PaperModSignatureCompat {
 			this.mixinClassInternalName = "ALL".equals(mixinClassInternalName) ? null : mixinClassInternalName;
 			this.oldTargetClassInternalName = oldTargetClassInternalName;
 			this.newTargetClassInternalName = newTargetClassInternalName;
-		}
-	}
-
-	static final class BridgeFieldPatch {
-		final String targetClassInternalName;
-		final String fieldName;
-		final String vanillaTypeDesc;
-		final String actualTypeDesc;
-		final String getterOwner;
-		final String getterName;
-		final String getterDesc;
-
-		BridgeFieldPatch(String targetClassInternalName, String fieldName,
-				String vanillaTypeDesc, String actualTypeDesc,
-				String getterOwner, String getterName, String getterDesc) {
-			this.targetClassInternalName = targetClassInternalName;
-			this.fieldName = fieldName;
-			this.vanillaTypeDesc = vanillaTypeDesc;
-			this.actualTypeDesc = actualTypeDesc;
-			this.getterOwner = getterOwner;
-			this.getterName = getterName;
-			this.getterDesc = getterDesc;
 		}
 	}
 
@@ -557,7 +634,6 @@ public final class PaperModSignatureCompat {
 	private static final List<SplitWrapOperationPatch> SPLIT_WRAP_OPERATION_PATCHES;
 	private static final List<InsertParamPatch> INSERT_PARAM_PATCHES;
 	private static final List<AsmMethodPatch> ASM_METHOD_PATCHES;
-	private static final List<BridgeFieldPatch> BRIDGE_FIELD_PATCHES;
 
 	private static final String MAPPINGS_RESOURCE_PATH = "mappings/mappings.tiny";
 
@@ -600,7 +676,6 @@ public final class PaperModSignatureCompat {
 		INSERT_PARAM_PATCHES = loaded.insertParamPatches;
 		ASM_METHOD_PATCHES = loaded.asmMethodPatches; 
 		SPLIT_WRAP_OPERATION_PATCHES = loaded.splitWrapOperationPatches;
-		BRIDGE_FIELD_PATCHES = loaded.bridgeFieldPatches;
 		CLASS_MAP = loaded.classMap;
 		METHOD_NAME_MAP = loaded.methodNameMap;
 		FIELD_NAME_MAP = loaded.fieldNameMap;
@@ -631,7 +706,6 @@ public final class PaperModSignatureCompat {
 		final List<InsertParamPatch> insertParamPatches;
 		final List<AsmMethodPatch> asmMethodPatches;
 		final List<SplitWrapOperationPatch> splitWrapOperationPatches;
-		final List<BridgeFieldPatch> bridgeFieldPatches;
 		final Map<String, String> classMap;
 		final Map<String, String> methodNameMap;
 		final Map<String, String> fieldNameMap;
@@ -651,7 +725,6 @@ public final class PaperModSignatureCompat {
 				List<InsertParamPatch> insertParamPatches,
 				List<AsmMethodPatch> asmMethodPatches,
 				List<SplitWrapOperationPatch> splitWrapOperationPatches,
-				List<BridgeFieldPatch> bridgeFieldPatches,
 				Map<String, String> classMap, Map<String, String> methodNameMap,
 				Map<String, String> fieldNameMap) {
 			this.signaturePatches = signaturePatches;
@@ -673,7 +746,6 @@ public final class PaperModSignatureCompat {
 			this.insertParamPatches = insertParamPatches;
 			this.asmMethodPatches = asmMethodPatches;
 			this.splitWrapOperationPatches = splitWrapOperationPatches;
-			this.bridgeFieldPatches = bridgeFieldPatches;
 			this.classMap = classMap;
 			this.methodNameMap = methodNameMap;
 			this.fieldNameMap = fieldNameMap;
@@ -712,7 +784,6 @@ public final class PaperModSignatureCompat {
 		List<InsertParamPatch> insertParamPatches = new ArrayList<>();
 		List<AsmMethodPatch> asmMethodPatches = new ArrayList<>();
 		List<SplitWrapOperationPatch> splitWrapOperationPatches = new ArrayList<>();
-		List<BridgeFieldPatch> bridgeFieldPatches = new ArrayList<>();
 		String[] currentSplitWrapOperationHeader = null;
 		List<SplitWrapOperationPatch.Variant> currentSplitWrapOperationVariants = new ArrayList<>();
 		Map<String, String> classMap = new HashMap<>();
@@ -736,7 +807,6 @@ public final class PaperModSignatureCompat {
 						insertParamPatches,
 						asmMethodPatches,
 						splitWrapOperationPatches,
-						bridgeFieldPatches,
 						classMap, methodNameMap, fieldNameMap);
 			}
 
@@ -951,10 +1021,6 @@ public final class PaperModSignatureCompat {
 								parts[1], parts[2], parts[3], parts[4], parts[5]
 							};
 							currentSplitWrapOperationVariants.clear();
-						} else if ("bridgeFieldPatch".equals(parts[0]) && parts.length == 8) {
-							currentClassOld = null;
-							bridgeFieldPatches.add(new BridgeFieldPatch(
-									parts[1], parts[2], parts[3], parts[4], parts[5], parts[6], parts[7]));
 						} else {
 							Log.warn(LogCategory.GAME_PATCH, "Skipping malformed %s line %d: %s",
 									MAPPINGS_RESOURCE_PATH, lineNo, line);
@@ -1065,14 +1131,14 @@ public final class PaperModSignatureCompat {
 					+ "CallbackInfoReturnable patch(es), %d call-growth patch(es), %d ASM patch(es), "
 					+ "%d annotation-selector patch(es), %d mixin-retarget patch(es), %d method-body patch(es), "
 					+ "%d wrap-method patch(es), %d helper-call patch(es), %d operation-call-growth patch(es), "
-					+ "%d injector-rewrite patch(es), %d insert-param patch(es), %d bridge-field patch(es)",
+					+ "%d injector-rewrite patch(es), %d insert-param patch(es)",
 					MAPPINGS_RESOURCE_PATH, classMap.size(), methodNameMap.size(), fieldNameMap.size(),
 					signaturePatches.size(), trailingArgsPatches.size(), leadingArgsPatches.size(),
 					shadowFieldTypePatches.size(), shadowFieldRedirectPatches.size(),
 					cirPatches.size(), callGrowthPatches.size(), asmPatches.size(),
 					annotationSelectorPatches.size(), mixinRetargetPatches.size(), methodBodyPatches.size(),
 					wrapMethodPatches.size(), helperCallPatches.size(), operationCallGrowthPatches.size(),
-					injectorRewritePatches.size(), insertParamPatches.size(), bridgeFieldPatches.size());
+					injectorRewritePatches.size(), insertParamPatches.size());
 		} catch (IOException e) {
 			Log.warn(LogCategory.GAME_PATCH, "Failed to read " + MAPPINGS_RESOURCE_PATH, e);
 		}
@@ -1090,7 +1156,6 @@ public final class PaperModSignatureCompat {
 				insertParamPatches,
 				asmMethodPatches,
 				splitWrapOperationPatches,
-				bridgeFieldPatches,
 				classMap, methodNameMap, fieldNameMap);
 	}
 
@@ -1227,14 +1292,10 @@ public final class PaperModSignatureCompat {
 			}
 		}
 
-		for (BridgeFieldPatch patch : BRIDGE_FIELD_PATCHES) {
-			if (mightReferenceClass(bytes, patch.targetClassInternalName)
-					|| mightReferenceClass(bytes, patch.targetClassInternalName.replace('/', '.'))) {
-				bytes = applyBridgeFieldPatch(name, bytes, patch);
-			}
-		}
-
 		bytes = normalizeRedirectAt(name, bytes);
+
+		// Make @Shadow members that Paper/Leaf removed exist, so the mixin applies instead of failing the mod.
+		bytes = ShadowMaterializer.apply(name, bytes);
 
 		// Safety net: last, so every other patch above has already had its chance to make the mixin fit.
 		bytes = relaxInjectorRequirements(name, bytes);
@@ -1535,6 +1596,16 @@ public final class PaperModSignatureCompat {
 					hasRequire = true;
 				} else if ("expect".equals(key)) {
 					hasExpect = true;
+				} else if ("locals".equals(key) && values.get(i + 1) instanceof String[]
+						&& !"false".equalsIgnoreCase(System.getProperty("ankhangbo.mixin.localsFailSoft"))) {
+					// Local capture that no longer fits Paper/Leaf's rewritten method ("LVT ... has incompatible changes"):
+					// FAILHARD/FAILEXCEPTION throw InjectionError (not covered by require=0) and kill the bootstrap.
+					// FAILSOFT only skips that one injection with a warning.
+					String[] en = (String[]) values.get(i + 1);
+
+					if (en.length == 2 && ("CAPTURE_FAILHARD".equals(en[1]) || "CAPTURE_FAILEXCEPTION".equals(en[1]))) {
+						values.set(i + 1, new String[] {en[0], "CAPTURE_FAILSOFT"});
+					}
 				}
 			}
 
@@ -2205,10 +2276,13 @@ public final class PaperModSignatureCompat {
 		boolean changed = false;
 
 		for (MethodNode method : node.methods) {
-			if (!method.desc.endsWith(CALLBACK_INFO_DESC)) continue;
+			// the CallbackInfo parameter is not always the last one of a "...)V" handler: a @ModifyVariable / @ModifyExpressionValue
+			// handler returns a value, and @Local / @Share parameters can follow it - so replace it wherever it sits
+			String widened = widenCallbackInfoParam(method.desc);
+			if (widened.equals(method.desc)) continue;
 			if (patch.targetMethodName != null && !injectorTargetsMethodName(method, patch.targetMethodName)) continue;
 
-			method.desc = method.desc.substring(0, method.desc.length() - CALLBACK_INFO_DESC.length()) + CALLBACK_INFO_RETURNABLE_DESC;
+			method.desc = widened;
 			changed = true;
 		}
 
@@ -2223,6 +2297,21 @@ public final class PaperModSignatureCompat {
 		ClassWriter writer = new SafeClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
 		node.accept(writer);
 		return writer.toByteArray();
+	}
+
+	/** Replaces every {@code CallbackInfo} parameter of a method descriptor by {@code CallbackInfoReturnable}. */
+	private static String widenCallbackInfoParam(String desc) {
+		org.objectweb.asm.Type[] args = org.objectweb.asm.Type.getArgumentTypes(desc);
+		boolean changed = false;
+
+		for (int i = 0; i < args.length; i++) {
+			if (args[i].getInternalName().equals("org/spongepowered/asm/mixin/injection/callback/CallbackInfo")) {
+				args[i] = org.objectweb.asm.Type.getObjectType("org/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable");
+				changed = true;
+			}
+		}
+
+		return changed ? org.objectweb.asm.Type.getMethodDescriptor(org.objectweb.asm.Type.getReturnType(desc), args) : desc;
 	}
 
 	private static boolean injectorTargetsMethodName(MethodNode method, String expectedName) {
@@ -2793,6 +2882,7 @@ public final class PaperModSignatureCompat {
 				method.visibleParameterAnnotations, oldFullArgs.length, 0, insertCount);
 		method.invisibleParameterAnnotations = insertNullSlotsInParamAnnotations(
 				method.invisibleParameterAnnotations, oldFullArgs.length, 0, insertCount);
+		resetAnnotableParameterCounts(method);
 
 		method.desc = "(" + patch.insertedArgsDesc + method.desc.substring(1);
 	}
@@ -2831,6 +2921,7 @@ public final class PaperModSignatureCompat {
 				method.visibleParameterAnnotations, oldFullArgs.length, paramIndex, insertCount);
 		method.invisibleParameterAnnotations = insertNullSlotsInParamAnnotations(
 				method.invisibleParameterAnnotations, oldFullArgs.length, paramIndex, insertCount);
+		resetAnnotableParameterCounts(method);
 
 		method.desc = "(" + patch.oldRealArgsDesc + patch.insertedArgsDesc + suffix;
 		method.signature = null;
@@ -3404,40 +3495,6 @@ public final class PaperModSignatureCompat {
 		}
 	}
 
-	private static byte[] applyBridgeFieldPatch(String name, byte[] bytes, BridgeFieldPatch patch) {
-		ClassNode node = new ClassNode();
-		new ClassReader(bytes).accept(node, 0);
-
-		if (!targetsClass(node, patch.targetClassInternalName)) {
-			return bytes;
-		}
-
-		if ((node.access & Opcodes.ACC_INTERFACE) != 0) {
-			return bytes;
-		}
-
-		for (FieldNode f : node.fields) {
-			if (f.name.equals(patch.fieldName) && f.desc.equals(patch.vanillaTypeDesc)) {
-				return bytes;
-			}
-		}
-
-		FieldNode newField = new FieldNode(
-				Opcodes.ACC_PRIVATE | Opcodes.ACC_SYNTHETIC,
-				patch.fieldName,
-				patch.vanillaTypeDesc,
-				null,
-				null);
-		node.fields.add(newField);
-
-		Log.info(LogCategory.GAME_PATCH, "Added bridge field %s#%s %s -> %s",
-				name, patch.fieldName, patch.vanillaTypeDesc, patch.actualTypeDesc);
-
-		ClassWriter writer = new SafeClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
-		node.accept(writer);
-		return writer.toByteArray();
-	}
-
 	private static Object decodeAnnotationElementValue(String raw) {
 		if ("true".equals(raw)) return Boolean.TRUE;
 		if ("false".equals(raw)) return Boolean.FALSE;
@@ -3446,6 +3503,19 @@ public final class PaperModSignatureCompat {
 		} catch (NumberFormatException ignored) {
 			return raw;
 		}
+	}
+
+	/**
+	 * ASM's ClassReader records the number of annotable parameters of the ORIGINAL descriptor in
+	 * MethodNode#visible/invisibleAnnotableParameterCount, and MethodNode#accept hands exactly that many
+	 * entries to the ClassWriter. After a parameter was inserted into the parameter-annotation arrays the
+	 * stale (smaller) count silently truncates the array, dropping the annotation of the LAST parameter
+	 * (e.g. MixinExtras' @Local), which then makes Mixin fail with "Invalid descriptor". Resetting the
+	 * count to 0 makes ASM use the real array length again.
+	 */
+	private static void resetAnnotableParameterCounts(MethodNode method) {
+		method.visibleAnnotableParameterCount = 0;
+		method.invisibleAnnotableParameterCount = 0;
 	}
 
 	@SuppressWarnings("unchecked")
@@ -3532,6 +3602,7 @@ public final class PaperModSignatureCompat {
 				target.visibleParameterAnnotations, oldArgs.length, patch.paramIndex);
 		target.invisibleParameterAnnotations = insertNullSlotInParamAnnotations(
 				target.invisibleParameterAnnotations, oldArgs.length, patch.paramIndex);
+		resetAnnotableParameterCounts(target);
 
 		Type[] newArgs = new Type[oldArgs.length + 1];
 		System.arraycopy(oldArgs, 0, newArgs, 0, patch.paramIndex);
@@ -4171,11 +4242,14 @@ public final class PaperModSignatureCompat {
 					"net.fabricmc.fabric.impl.entity.event.effect.MobEffectUtil");
 			Object ctx = mobEffectUtilClass.getMethod("getCommandContext").invoke(null);
 
-			java.lang.reflect.Method allowEarlyRemove = invoker.getClass().getMethod(
-					"allowEarlyRemove",
-					FabricLauncherBase.getClass("net.minecraft.world.effect.MobEffectInstance"),
-					FabricLauncherBase.getClass("net.minecraft.world.entity.LivingEntity"),
-					ctx.getClass());
+			// The invoker is a hidden lambda class: getMethod on ITS class with the impl type of ctx (EffectEventContextImpl)
+			// throws NoSuchMethodException (the method is declared on the functional interface with the EffectEventContext
+			// parameter). Look the method up on the interfaces instead, by name and arity.
+			java.lang.reflect.Method allowEarlyRemove = findInterfaceMethod(invoker.getClass(), "allowEarlyRemove", 3);
+			if (allowEarlyRemove == null) {
+				throw new NoSuchMethodException("allowEarlyRemove(3 params) on " + invoker.getClass().getName());
+			}
+			allowEarlyRemove.setAccessible(true);
 
 			for (java.util.Map.Entry<Object, Object> entry : snapshot.entrySet()) {
 				boolean cannotRemove = !((Boolean) allowEarlyRemove.invoke(
@@ -4200,6 +4274,33 @@ public final class PaperModSignatureCompat {
 	}
 
 	private static final ThreadLocal<Boolean> IN_REMOVE_ALL_EFFECTS = ThreadLocal.withInitial(() -> false);
+
+	/** public method {@code name} with {@code arity} parameters declared on any interface of {@code type} (or, failing that, on the class itself). */
+	private static java.lang.reflect.Method findInterfaceMethod(Class<?> type, String name, int arity) {
+		java.util.ArrayDeque<Class<?>> queue = new java.util.ArrayDeque<>();
+		java.util.Set<Class<?>> seen = new java.util.HashSet<>();
+		queue.add(type);
+
+		while (!queue.isEmpty()) {
+			Class<?> c = queue.poll();
+			if (c == null || !seen.add(c)) continue;
+
+			if (c.isInterface()) {
+				for (java.lang.reflect.Method m : c.getMethods()) {
+					if (m.getName().equals(name) && m.getParameterCount() == arity) return m;
+				}
+			}
+
+			queue.addAll(java.util.Arrays.asList(c.getInterfaces()));
+			if (c.getSuperclass() != null) queue.add(c.getSuperclass());
+		}
+
+		for (java.lang.reflect.Method m : type.getMethods()) {
+			if (m.getName().equals(name) && m.getParameterCount() == arity) return m;
+		}
+
+		return null;
+	}
 
 	@SuppressWarnings("unused")
 	public static void handleRemoveAllEffects(Object self, Object cir) {
@@ -4246,11 +4347,14 @@ public final class PaperModSignatureCompat {
 					"net.fabricmc.fabric.impl.entity.event.effect.MobEffectUtil");
 			Object ctx = mobEffectUtilClass.getMethod("getCommandContext").invoke(null);
 
-			java.lang.reflect.Method allowEarlyRemove = invoker.getClass().getMethod(
-					"allowEarlyRemove",
-					FabricLauncherBase.getClass("net.minecraft.world.effect.MobEffectInstance"),
-					FabricLauncherBase.getClass("net.minecraft.world.entity.LivingEntity"),
-					ctx.getClass());
+			// The invoker is a hidden lambda class: getMethod on ITS class with the impl type of ctx (EffectEventContextImpl)
+			// throws NoSuchMethodException (the method is declared on the functional interface with the EffectEventContext
+			// parameter). Look the method up on the interfaces instead, by name and arity.
+			java.lang.reflect.Method allowEarlyRemove = findInterfaceMethod(invoker.getClass(), "allowEarlyRemove", 3);
+			if (allowEarlyRemove == null) {
+				throw new NoSuchMethodException("allowEarlyRemove(3 params) on " + invoker.getClass().getName());
+			}
+			allowEarlyRemove.setAccessible(true);
 
 			for (java.util.Map.Entry<Object, Object> entry : snapshot.entrySet()) {
 				boolean cannotRemove = !((Boolean) allowEarlyRemove.invoke(

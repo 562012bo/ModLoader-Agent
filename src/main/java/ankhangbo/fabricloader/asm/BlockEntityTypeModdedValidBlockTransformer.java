@@ -67,7 +67,7 @@ public final class BlockEntityTypeModdedValidBlockTransformer implements ClassFi
 				}
 			}
 			if (setField == null) {
-				LOGGER.warning("BlockEntityType has no Set field - NOT patched");
+				//LOGGER.warning("BlockEntityType has no Set field - NOT patched");
 				return null;
 			}
 
@@ -110,12 +110,12 @@ public final class BlockEntityTypeModdedValidBlockTransformer implements ClassFi
 				patched = true;
 			}
 			if (!patched) {
-				LOGGER.warning("BlockEntityType#isValid(BlockState) not found - NOT patched");
+				//LOGGER.warning("BlockEntityType#isValid(BlockState) not found - NOT patched");
 				return null;
 			}
 			ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
 			classNode.accept(writer);
-			LOGGER.info("PATCHED BlockEntityType#isValid (set field '" + setField + "')");
+			//LOGGER.info("PATCHED BlockEntityType#isValid (set field '" + setField + "')");
 			return writer.toByteArray();
 		} catch (Throwable t) {
 			LOGGER.log(Level.WARNING, "Failed to patch " + className + " - leaving it unpatched", t);

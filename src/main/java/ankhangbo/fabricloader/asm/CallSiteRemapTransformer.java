@@ -78,7 +78,7 @@ public final class CallSiteRemapTransformer implements ClassFileTransformer {
 
 			ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS);
 			cn.accept(w);
-			LOGGER.info("REMAPPED " + changed + " call(s) to Mth.positiveModulo -> positiveModuloForAnyDenominator in " + className);
+			//LOGGER.info("REMAPPED " + changed + " call(s) to Mth.positiveModulo -> positiveModuloForAnyDenominator in " + className);
 			return w.toByteArray();
 		} catch (Throwable t) {
 			LOGGER.log(Level.WARNING, "Failed to remap calls in " + className, t);

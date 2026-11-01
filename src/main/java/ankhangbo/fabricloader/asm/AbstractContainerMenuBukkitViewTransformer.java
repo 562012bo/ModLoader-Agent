@@ -131,7 +131,7 @@ public final class AbstractContainerMenuBukkitViewTransformer implements ClassFi
 			ClassWriter writer = new SafeClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
 			classNode.accept(writer);
 
-			LOGGER.fine(() -> "Injected a generic getBukkitView() fallback into " + className);
+			//LOGGER.fine(() -> "Injected a generic getBukkitView() fallback into " + className);
 			return writer.toByteArray();
 		} catch (Throwable t) {
 			LOGGER.log(Level.WARNING, "Failed to check/patch " + className

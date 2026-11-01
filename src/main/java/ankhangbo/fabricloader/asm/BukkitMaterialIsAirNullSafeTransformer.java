@@ -96,7 +96,7 @@ public final class BukkitMaterialIsAirNullSafeTransformer implements ClassFileTr
 
 			ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS);
 			cn.accept(w);
-			LOGGER.info("PATCHED " + className + " (" + patched + " Material.isAir() call(s) made null-safe for modded blocks)");
+			//LOGGER.info("PATCHED " + className + " (" + patched + " Material.isAir() call(s) made null-safe for modded blocks)");
 			return w.toByteArray();
 		} catch (Throwable t) {
 			LOGGER.log(Level.WARNING, "Failed to patch " + className, t);

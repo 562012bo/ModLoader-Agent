@@ -6,10 +6,19 @@ import ankhangbo.fabricloader.asm.AttributeSupplierEarlyInitTransformer;
 import ankhangbo.fabricloader.asm.BlockEntityTypeAllowDuplicateTransformer;
 import ankhangbo.fabricloader.asm.BukkitMaterialIsAirNullSafeTransformer;
 import ankhangbo.fabricloader.asm.CallSiteRemapTransformer;
+import ankhangbo.fabricloader.asm.ChunkHolderMoonriseBridgeTransformer;
 import ankhangbo.fabricloader.asm.DataFixerUpperNullTypeTransformer;
 import ankhangbo.fabricloader.asm.LeafApiBridgeTransformer;
+import ankhangbo.fabricloader.asm.NaturalSpawnerAsyncStateMobCapTransformer;
+import ankhangbo.fabricloader.asm.ContainerTransferToPlayerTransformer;
+import ankhangbo.fabricloader.asm.CraftTagNullSafeTransformer;
+import ankhangbo.fabricloader.asm.ExperienceOrbCanMergeBridgeTransformer;
+import ankhangbo.fabricloader.asm.FerriteCoreBlockStateCacheSynchronizedTransformer;
+import ankhangbo.fabricloader.asm.ModdedMaterialsTransformer;
+import ankhangbo.fabricloader.asm.ServerLevelEntityManagerFieldTransformer;
 import ankhangbo.fabricloader.asm.StateHolderNullArraysTransformer;
 import ankhangbo.fabricloader.asm.Vec3iUnfinalTransformer;
+import ankhangbo.fabricloader.asm.VoxelShapeLazyInitTransformer;
 
 import net.fabricmc.loader.impl.util.log.Log;
 import net.fabricmc.loader.impl.util.log.LogCategory;
@@ -35,6 +44,25 @@ final class GameClassPatcher {
 			new BlockEntityTypeAllowDuplicateTransformer(),
 			new DataFixerUpperNullTypeTransformer(),
 			new LeafApiBridgeTransformer(),
+			new VoxelShapeLazyInitTransformer(),
+			new ChunkHolderMoonriseBridgeTransformer(),
+			new NaturalSpawnerAsyncStateMobCapTransformer(),
+			new ContainerTransferToPlayerTransformer(),
+			new ServerLevelEntityManagerFieldTransformer(),
+			new ExperienceOrbCanMergeBridgeTransformer(),
+			new FerriteCoreBlockStateCacheSynchronizedTransformer(),
+			new CraftTagNullSafeTransformer(),
+			new ModdedMaterialsTransformer(),
+	};
+
+	/**
+	 * Patches that add members Mixin must SEE when it reads a target class' bytes (accessor/shadow validation happens on the bytes
+	 * from getPreMixinClassByteArray / getResourceAsStream, not on what Knot later defines). Idempotent: the same transformers are
+	 * also in {@link #CHAIN}.
+	 */
+	private static final ClassFileTransformer[] MIXIN_VISIBLE = {
+			new ServerLevelEntityManagerFieldTransformer(),
+			new ExperienceOrbCanMergeBridgeTransformer(),
 	};
 
 	static {
@@ -54,6 +82,23 @@ final class GameClassPatcher {
 
 	private GameClassPatcher() { }
 
+	/** see {@link #MIXIN_VISIBLE}; name may be dotted or internal */
+	static byte[] applyMixinVisible(String name, byte[] bytes) {
+		String internal = name.replace('.', '/');
+
+		for (ClassFileTransformer t : MIXIN_VISIBLE) {
+			try {
+				byte[] r = t.transform(null, internal, null, null, bytes);
+
+				if (r != null) bytes = r;
+			} catch (Throwable e) {
+				Log.warn(LogCategory.KNOT, "Compat patch " + t.getClass().getSimpleName() + " failed for " + name, e);
+			}
+		}
+
+		return bytes;
+	}
+
 	static byte[] apply(String name, byte[] bytes) {
 		String internal = name.replace('.', '/');
 
@@ -66,7 +111,7 @@ final class GameClassPatcher {
 		}
 
 		if (!name.startsWith("net.minecraft.") && !name.startsWith("org.bukkit.craftbukkit.") && !name.startsWith("io.papermc.paper.")
-				&& !name.equals("com.mojang.datafixers.DataFixerUpper")) {
+				&& !name.equals("com.mojang.datafixers.DataFixerUpper") && !name.startsWith("malte0811.ferritecore.") && !name.equals("org.bukkit.Material")) {
 			return bytes;
 		}
 

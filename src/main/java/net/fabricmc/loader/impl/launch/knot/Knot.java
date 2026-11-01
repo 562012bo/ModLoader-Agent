@@ -327,6 +327,7 @@ public final class Knot extends FabricLauncherBase {
 				raw.close();
 				String className = name.substring(0, name.length() - ".class".length()).replace('/', '.');
 				bytes = net.fabricmc.loader.impl.transformer.PaperModSignatureCompat.fixIfNeeded(className, bytes);
+				bytes = GameClassPatcher.applyMixinVisible(className, bytes);
 				return new java.io.ByteArrayInputStream(bytes);
 			} catch (IOException e) {
 				throw new RuntimeException("Failed to read resource '" + name + "'", e);

@@ -64,13 +64,13 @@ public final class BlockEntityTypeAllowDuplicateTransformer implements ClassFile
 			}
 
 			if (patched == 0) {
-				LOGGER.warning(className + ": duplicate-type check not found - NOT patched (not a Leaf build?)");
+				//LOGGER.warning(className + ": duplicate-type check not found - NOT patched (not a Leaf build?)");
 				return null;
 			}
 
 			ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS);
 			cn.accept(w);
-			LOGGER.info("PATCHED " + className + " (a block may now belong to several block entity types, like on Fabric)");
+			//LOGGER.info("PATCHED " + className + " (a block may now belong to several block entity types, like on Fabric)");
 			return w.toByteArray();
 		} catch (Throwable t) {
 			LOGGER.log(Level.WARNING, "Failed to patch " + className, t);

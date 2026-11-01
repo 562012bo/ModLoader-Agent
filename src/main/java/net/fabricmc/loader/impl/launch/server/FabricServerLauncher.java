@@ -109,7 +109,7 @@ public class FabricServerLauncher {
 		// Mojang's default server filename is "server.jar" as of
 		// a few versions... let's use this.
 		if (!properties.containsKey("serverJar")) {
-			properties.put("serverJar", "paper.jar");
+			properties.put("serverJar", "leaf.jar");
 
 			try (Writer writer = Files.newBufferedWriter(propertiesFile)) {
 				properties.store(writer, null);

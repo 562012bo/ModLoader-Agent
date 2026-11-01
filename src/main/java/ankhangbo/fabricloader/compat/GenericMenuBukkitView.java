@@ -46,6 +46,28 @@ public final class GenericMenuBukkitView {
 	// collected along with it - this is a convenience cache, not a source of truth.
 	private static final Map<Object, Object> CACHE = Collections.synchronizedMap(new WeakHashMap<>());
 
+	/**
+	 * The player that is opening/transferring a menu right now: {@code AbstractContainerMenu.transferTo(other, player)} calls
+	 * {@code other.getBukkitView()} and a modded menu that stores no player (and has no player-inventory slots, e.g. Waystones'
+	 * WaystoneSelectionMenu) gives us no other way to know who it is. Set at the start of transferTo, cleared on return, and
+	 * only trusted for a few ms so it can never leak onto another player's menu.
+	 */
+	private static final ThreadLocal<Object[]> OPENING = new ThreadLocal<>();
+
+	/** Called from the patched {@code AbstractContainerMenu.transferTo}; {@code bukkitHuman} is the CraftHumanEntity. */
+	public static void setOpeningPlayer(Object bukkitHuman) {
+		OPENING.set(bukkitHuman == null ? null : new Object[] { bukkitHuman, System.nanoTime() });
+	}
+
+	public static void clearOpeningPlayer() {
+		OPENING.remove();
+	}
+
+	private static Object currentOpeningHuman() {
+		Object[] o = OPENING.get();
+		return o != null && System.nanoTime() - (Long) o[1] < 500_000_000L ? o[0] : null;
+	}
+
 	private GenericMenuBukkitView() {
 	}
 
@@ -115,14 +137,20 @@ public final class GenericMenuBukkitView {
 		if (serverPlayer == null) {
 			serverPlayer = findPlayerViaSlots(menu, playerInventoryClass, playerClass);
 		}
-		if (serverPlayer == null) {
-			LOGGER.warning("No Player-typed field (directly, via a player-Inventory-typed field, "
-					+ "or via any slot's backing container) found anywhere on "
-					+ menu.getClass().getName() + " - cannot build a generic InventoryView "
-					+ "without knowing who opened it.");
-			return null;
+		Object humanEntity;
+		if (serverPlayer != null) {
+			humanEntity = serverPlayer.getClass().getMethod("getBukkitEntity").invoke(serverPlayer);
+		} else {
+			// menu stores no player at all (e.g. Waystones' selection menu): use the player of the transferTo that is running now
+			humanEntity = currentOpeningHuman();
+			if (humanEntity == null) {
+				LOGGER.warning("No Player-typed field (directly, via a player-Inventory-typed field, "
+						+ "or via any slot's backing container) found anywhere on "
+						+ menu.getClass().getName() + " and no menu is being opened right now - cannot build a "
+						+ "generic InventoryView without knowing who opened it.");
+				return null;
+			}
 		}
-		Object humanEntity = serverPlayer.getClass().getMethod("getBukkitEntity").invoke(serverPlayer);
 
 		// AbstractContainerMenu#slots (protected/public List<Slot>) - only used to size the
 		// generic inventory reasonably; non-essential, so any failure here just falls back to a
