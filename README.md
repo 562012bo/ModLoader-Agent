@@ -26,6 +26,7 @@
 - TT20
 - Lithium
 - C2ME
+- ScalableLux
 
 ---
 
