@@ -81,3 +81,8 @@ This is **not** a full Fabric server. It's a compatibility layer for **simple to
 4. **Edit** `fabric-server-launcher.properties` to point to the correct server jar:
    ```properties
    serverJar=leaf.jar
+
+
+## Note
+- 2.1.2 leaf 128 down 90
+- 2.1.3 leaf 129 above
