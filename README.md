@@ -76,7 +76,7 @@ This is **not** a full Fabric server. It's a compatibility layer for **simple to
 
 2. **Place** `modloader-agent.jar` in your server directory.
 
-3. **Place** Fabric mods in `/mods/` folder.
+3. **Place** Fabric mods in `/mods/modsreal` folder.
 
 4. **Edit** `fabric-server-launcher.properties` to point to the correct server jar:
    ```properties
