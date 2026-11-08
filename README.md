@@ -68,7 +68,7 @@ This is **not** a full Fabric server. It's a compatibility layer for **simple to
 
 - **Java 25** (Oracle JDK or OpenJDK)
 - **Leaf server** 26.2
-- Fabric mods placed in `/mods/` folder
+- Fabric mods placed in `/mods/modsreal/` folder
 
 ### Steps
 
@@ -76,7 +76,7 @@ This is **not** a full Fabric server. It's a compatibility layer for **simple to
 
 2. **Place** `modloader-agent.jar` in your server directory.
 
-3. **Place** Fabric mods in `/mods/modsreal` folder.
+3. **Place** Fabric mods in `/mods/modsreal/` folder.
 
 4. **Edit** `fabric-server-launcher.properties` to point to the correct server jar:
    ```properties
