@@ -27,7 +27,7 @@
 - Lithium
 - C2ME
 - ScalableLux
-- Fabric Api
+- Fabric API (standalone — use the included version instead)
 
 ---
 
