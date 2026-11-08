@@ -83,6 +83,9 @@ This is **not** a full Fabric server. It's a compatibility layer for **simple to
    serverJar=leaf.jar
 
 
-## Note
-- 2.1.2 leaf 128 down 90
-- 2.1.3 leaf 129 above
+### 📋 Version compatibility
+| ModLoader-Agent | Leaf build |
+|-----------------|------------|
+| 2.1.2 | #128 and below |
+| 2.1.3 | #129 and above |
+
